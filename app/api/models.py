@@ -1,0 +1,47 @@
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
+
+
+# MAYBE TODO: add city model
+@dataclass
+class Station:
+    id: int
+    codename: str
+    name: str
+    district: str
+    voivodeship: str
+    city: str
+    address: str
+    latitude: float
+    longitude: float
+
+@dataclass
+class StationMeta:
+    codename: str
+    international_codename: str | None
+    launch_date: datetime
+    close_date: datetime | None
+    type: str
+
+@dataclass
+class Sensor:
+    id: int
+    codename: str
+
+@dataclass
+class IndexCategory:
+    value: int
+    name: str
+
+@dataclass
+class Index:
+    date: datetime
+    value: int | None
+
+@dataclass
+class AirQualityIndexes:
+    overall: Index
+    sensors: dict[str,Index]
+    index_status: bool
+    index_critical: str
