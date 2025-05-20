@@ -194,6 +194,7 @@ class StationSelectFrame(ttk.Frame):
             right,
             database_path="offline_map_data.db"
         )
+        self.map.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga")
         self.map.pack(side='bottom', fill='both',expand=True)
         self.map.max_zoom = 10
         self.map.min_zoom = 10
