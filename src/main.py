@@ -1,11 +1,10 @@
-from app import App
+import sys
 import logging
+from app import Application
+
 def main():
-    app = App()
-
-    app.run()
-
-
+    app = Application()
+    app.exec()
 
 if __name__ == "__main__":
     logging.basicConfig(level='DEBUG')
