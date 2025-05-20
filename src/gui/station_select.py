@@ -193,7 +193,6 @@ class StationSelectFrame(ttk.Frame):
         self.map = tkintermapview.TkinterMapView(
             right
         )
-        self.map.set_tile_server("http://tile.stamen.com/terrain/{z}/{x}/{y}.jpg")
         self.map.pack(side='bottom', fill='both',expand=True)
         self.map.max_zoom = 10
         self.map.min_zoom = 10
