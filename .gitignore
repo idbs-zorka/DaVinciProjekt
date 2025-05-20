@@ -1,16 +1,16 @@
 # Idea IDE Specific
-    # User-specific IDE settings
-    .idea/workspace.xml
-    .idea/tasks.xml
-    .idea/dictionaries/
-    .idea/dataSources.*
-    .idea/sqlDataSources.*
-    .idea/dynamic.xml
-    .idea/uiDesigner.xml
+# User-specific IDE settings
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/dictionaries/
+.idea/dataSources.*
+.idea/sqlDataSources.*
+.idea/dynamic.xml
+.idea/uiDesigner.xml
 
-    # Local history and caches
-    .idea/caches/
-    .idea/compiler.xml
+# Local history and caches
+.idea/caches/
+.idea/compiler.xml
 
 .venv
 private
