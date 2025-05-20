@@ -4,8 +4,14 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="b37dba80-87f9-42cc-85a5-fea34265d123" name="Changes" comment="Removed .idea">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+    <list default="true" id="b37dba80-87f9-42cc-85a5-fea34265d123" name="Changes" comment="Tuned .gitignore file to not ignore project specific files">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/database.db" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/database/client.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/database/client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/database/views.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/database/views.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gui/station_select.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/gui/station_select.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/repository.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -36,19 +42,19 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ASKED_SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python.main.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "git-widget-placeholder": "main",
+    "ignore.virus.scanning.warn.message": "true",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\Developerskie\praktyki\DaVinciProjekt\private" />
@@ -150,7 +156,23 @@
       <option name="project" value="LOCAL" />
       <updated>1747730719140</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Tuned .gitignore file to not ignore project specific files">
+      <option name="closed" value="true" />
+      <created>1747731275262</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1747731275262</updated>
+    </task>
+    <task id="LOCAL-00009" summary="Tuned .gitignore file to not ignore project specific files">
+      <option name="closed" value="true" />
+      <created>1747731302446</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1747731302446</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -182,6 +204,7 @@
     <MESSAGE value="Fixed project structure" />
     <MESSAGE value="Added requirements" />
     <MESSAGE value="Removed .idea" />
-    <option name="LAST_COMMIT_MESSAGE" value="Removed .idea" />
+    <MESSAGE value="Tuned .gitignore file to not ignore project specific files" />
+    <option name="LAST_COMMIT_MESSAGE" value="Tuned .gitignore file to not ignore project specific files" />
   </component>
 </project>

@@ -58,20 +58,7 @@ class Repository:
         return self._database_client.get_station_list_view()
 
     def fetch_station_details_view(self, station_id: int) -> database.views.StationDetailsView:
-        """
-        Pobiera szczegółowe dane widoku dla wybranej stacji.
-
-        Args:
-            station_id (int): Identyfikator stacji.
-
-        Returns:
-            database.views.StationDetailsView: Obiekt widoku ze szczegółami stacji.
-
-        Raises:
-            ValueError: Jeśli nie znaleziono stacji o podanym identyfikatorze.
-        """
-        # TODO: implementować logikę pobierania szczegółów stacji
-        raise NotImplementedError("Metoda `fetch_station_details_view` nie została jeszcze zaimplementowana.")
+        return self._database_client.fetch_station_detail_view(station_id)
 
     def update_station_air_quality_indexes(self, station_id: int):
         """

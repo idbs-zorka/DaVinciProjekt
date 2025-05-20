@@ -6,7 +6,7 @@ import tkintermapview
 from tkintermapview import TkinterMapView
 from tkintermapview.canvas_position_marker import CanvasPositionMarker
 
-from src.database.views import StationListView
+from src.database.views import StationListView,StationDetailsView
 import src.location as location
 import src.config as config
 from typing import Callable, List, Optional, Any
@@ -21,29 +21,6 @@ from src.fuzzy_seach import fuzzy_search
 class FilterState:
     city: str | None
     search_query: str | None
-
-class TkinterMapViewExtended(tkintermapview.TkinterMapView):
-
-    def get_bbox(self) -> tuple[tuple[float, float], tuple[float, float]]:
-        #TODO: Doesn't work
-        """
-        Returns ((lat_top, lon_left), (lat_bottom, lon_right))
-        for the currently visible map area, using the stored
-        upper_left_tile_pos and lower_right_tile_pos.
-        """
-        self.update_idletasks()
-        # these are fractional tile coords stored on the widget
-        ul_x, ul_y = self.upper_left_tile_pos
-        lr_x, lr_y = self.lower_right_tile_pos
-        zoom = int(self.zoom)  # current integer zoom level
-
-        # convert upper-left tile to lat/lon
-        lat_ul, lon_ul = tkintermapview.osm_to_decimal(ul_x, ul_y, zoom)
-        # convert lower-right tile to lat/lon
-        lat_lr, lon_lr = tkintermapview.osm_to_decimal(lr_x, lr_y, zoom)
-
-        return (lat_ul, lon_ul), (lat_lr, lon_lr)
-
 
 class SearchBarFrame(ttk.Frame):
     """
@@ -89,10 +66,7 @@ class SearchBarFrame(ttk.Frame):
 
 
     def _on_filter_changed(self, event: tk.Event):
-        current_city = self.city_choice.get().strip()
-
-        if current_city == '' or current_city == self.DEFAULT_CITY_COMBOBOX_VALUE:
-            current_city = None
+        current_city = self.city_choice.get().strip() if self.city_choice.current() > 0 else None
 
         current_search_query = self.search_entry.get().strip()
 
@@ -158,18 +132,22 @@ class StationSelectFrame(ttk.Frame):
     """
     Main frame combining search bar, station list, and map view.
     """
+    on_station_select: Callable[[int],None]
+
+    DEFAULT_INDEX_SELECT_VALUE = "Wybierz indeks"
 
     def __init__(
         self,
         master: tk.Misc,
         repository: Repository,
+        on_station_select,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
         self.repository = repository
         self.stations = self.repository.get_station_list_view()
         self.filtered_stations = self.stations
-
+        self.on_station_select = on_station_select
         self._build_layout()
 
     def _build_layout(self) -> None:
@@ -204,19 +182,21 @@ class StationSelectFrame(ttk.Frame):
 
         self.index_cb = ttk.Combobox(
             index_input_frame,
-            values=config.AQ_TYPES,
-            state='readonly',
+            values=[self.DEFAULT_INDEX_SELECT_VALUE, *config.AQ_TYPES],
+            state='readonly'
         )
+        self.index_cb.current(0)
         self.index_cb.grid(row=0,column=2)
         self.index_cb.bind('<<ComboboxSelected>>', self._on_index_change)
         self.index_cb.current(0)
 
-        self.map = TkinterMapViewExtended(
+        self.map = tkintermapview.TkinterMapView(
             right,
             database_path="offline_map_data.db"
         )
         self.map.pack(side='bottom', fill='both',expand=True)
-
+        self.map.max_zoom = 10
+        self.map.min_zoom = 10
         self._setup_markers()
         self._set_default_position()
 
@@ -224,25 +204,32 @@ class StationSelectFrame(ttk.Frame):
     def _setup_markers(self) -> None:
         self.map.delete_all_marker()
 
-        #TODO: Filter by visible markers
+        #TODO: Optimization: Filter by visible markers only
+        for station in self.stations:
+            def get_color():
+                try:
+                    if self.index_cb.current() > 0:
+                        indexes = self.repository.fetch_station_air_quality_indexes(station.id)
+                        target_index = self.index_cb.get()
+                        current_index_value = next(idx.value for idx in indexes if idx.codename == target_index)
+                        return config.AQ_INDEX_CATEGORIES_COLORS[current_index_value]
+                    else:
+                        return 'white'
+                except StopIteration:
+                    return 'black'
 
-        for station in self.filtered_stations:
-            indexes = self.repository.fetch_station_air_quality_indexes(station.id)
-            target_index = self.index_cb.get()
-            try:
-                current_index_value = next(idx.value for idx in indexes if idx.codename == target_index)
-                color = config.AQ_INDEX_CATEGORIES_COLORS[current_index_value]
+            curr_color = get_color()
 
-                self.map.set_marker(
-                    deg_x=station.latitude,
-                    deg_y=station.longitude,
-                    text=station.name,
-                    marker_color_circle=color,
-                    marker_color_outside=color,
-                    command=self._on_marker_click
-                )
-            except StopIteration:
-                pass
+            self.map.set_marker(
+                deg_x=station.latitude,
+                deg_y=station.longitude,
+                text=station.name,
+                marker_color_circle='black',
+                marker_color_outside=curr_color,
+                command=self._on_marker_click,
+                data=station
+            )
+
 
     def _set_default_position(self) -> None:
         pos = location.current_location() or (52.215933, 19.134422)
@@ -259,10 +246,10 @@ class StationSelectFrame(ttk.Frame):
         station: StationListView = marker.data
         self.map.set_position(deg_x=marker.position[0], deg_y=marker.position[1])
         self.station_list.set_selected_item(station.name)
+        self.on_station_select(station.id)
 
     def _filter_stations(self, filter_state: FilterState) -> None:
         """Filter the list of stations by name or city."""
-
 
         self.filtered_stations = [
             st for st in self.stations
@@ -289,3 +276,19 @@ class StationSelectFrame(ttk.Frame):
 
     def _on_index_change(self, event: tk.Event) -> None:
         self._setup_markers()
+
+
+class StationDetailsFrame(tk.Toplevel):
+    target_station_id: int
+    text: tk.Text
+    def __init__(self,station_details: StationDetailsView ,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+
+        self.target_station_id = station_details.id
+
+        tk.Label(self,text=f"Kod stacji: {station_details.codename}").pack()
+        tk.Label(self,text=f"Nazwa: {station_details.name}").pack()
+        tk.Label(self,text=f"Region: {station_details.district}").pack()
+        tk.Label(self,text=f"Województwo: {station_details.voivodeship}").pack()
+        tk.Label(self,text=f"Miasto: {station_details.city}").pack()
+        tk.Label(self,text=f"Adres: {station_details.address}").pack()

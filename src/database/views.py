@@ -13,7 +13,12 @@ class StationListView(StationCommonView):
 
 @dataclass
 class StationDetailsView(StationCommonView):
-    pass
+    codename: str
+    name: str
+    district: str
+    voivodeship: str
+    city: str
+    address: str
 
 @dataclass
 class AQIndexView:

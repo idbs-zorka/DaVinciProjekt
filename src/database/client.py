@@ -318,7 +318,7 @@ class Client:
         """, (station_id,)).fetchone()
         return datetime.fromtimestamp(qry["last_meta_update_at"])
 
-    def fetch_station_detail_view(self) -> views.StationDetailsView:
+    def fetch_station_detail_view(self,station_id: int) -> views.StationDetailsView:
         """
         Zwraca widok szczegółów stacji.
 
@@ -328,7 +328,26 @@ class Client:
         Raises:
             NotImplementedError: Metoda jeszcze nie zaimplementowana.
         """
-        raise NotImplementedError("Metoda `fetch_station_detail_view` nie została jeszcze zaimplementowana.")
+
+        qry = self.__cursor.execute("""
+            SELECT station.codename, station.name, city.district, city.voivodeship, city.city, station.address
+            FROM station
+            JOIN city
+                ON station.city_id = city.id
+            WHERE station.id = ?
+        """,(station_id,)).fetchone()
+
+        return views.StationDetailsView(
+            id=station_id,
+            codename=qry['codename'],
+            name=qry['name'],
+            district=qry['district'],
+            voivodeship=qry['voivodeship'],
+            city=qry['city'],
+            address=qry['address']
+        )
+
+
 
     def update_sensor_types(self, types: list[str]):
         """
