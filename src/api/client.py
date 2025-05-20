@@ -64,7 +64,7 @@ class Client:
         """
         try:
             url = self.make_url(endpoint, page, size, args)
-            response = requests.get(url)
+            response = requests.get(url,timeout=None)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as e:
