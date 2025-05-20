@@ -2,7 +2,6 @@ from app import App
 import logging
 
 def main():
-
     app = App()
     app.run()
 
