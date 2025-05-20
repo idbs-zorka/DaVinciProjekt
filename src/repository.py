@@ -1,8 +1,8 @@
-import app.api.client as api
-import app.database.client as database
+import src.api.client as api
+import src.database.client as database
 from datetime import datetime
 
-from app.config import UPDATE_INTERVALS
+from src.config import UPDATE_INTERVALS
 
 class Repository:
     """
@@ -82,11 +82,10 @@ class Repository:
         """
         air_quality_indexes = self._api_client.fetch_air_quality_indexes(station_id)
 
-        if air_quality_indexes is not None:
-            self._database_client.update_station_air_quality_indexes(
-                station_id=station_id,
-                indexes=air_quality_indexes
-            )
+        self._database_client.update_station_air_quality_indexes(
+            station_id=station_id,
+            indexes=air_quality_indexes
+        )
 
     def fetch_station_air_quality_indexes(self, station_id: int) -> list[database.views.AQIndexView]:
         """

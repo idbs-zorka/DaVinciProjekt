@@ -3,10 +3,10 @@ from datetime import datetime
 import sqlite3
 from enum import Enum
 
-import app.api.client as api
-import app.database.views as views
-from app.api.models import IndexCategory
-import app.config as config
+import src.api.client as api
+import src.database.views as views
+from src.api.models import IndexCategory
+import src.config as config
 
 
 class Client:
@@ -50,11 +50,13 @@ class Client:
                 last_update_at TIMESTAMP NOT NULL DEFAULT 0
             )
         """)
+
         # Wstawienie brakujących identyfikatorów
         self.__cursor.executemany("""
             INSERT OR IGNORE INTO global_update (id)
                 VALUES (?)
         """, [(member.value,) for member in self.GlobalUpdateIds])
+
         # Tabele stacji i powiązane
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS city (
@@ -64,6 +66,7 @@ class Client:
                 city TEXT NOT NULL UNIQUE
             )
         """)
+
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS station_update (
                 station_id INTEGER UNIQUE,
@@ -73,6 +76,7 @@ class Client:
                 FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE
             )
         """)
+
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS station (
                 id INTEGER PRIMARY KEY,
@@ -85,6 +89,7 @@ class Client:
                 FOREIGN KEY (city_id) REFERENCES city(id)
             )
         """)
+
         # Triggery aktualizujące global_update przy zmianach w station
         self.__cursor.execute(f"""
             CREATE TRIGGER IF NOT EXISTS tgr_on_insert_station
@@ -104,6 +109,7 @@ class Client:
                 WHERE id = {self.GlobalUpdateIds.STATION_LIST.value};
             END
         """)
+
         # Tabela metadanych stacji i triggery do ich śledzenia
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS station_meta (
@@ -135,6 +141,7 @@ class Client:
                 VALUES (NEW.station_id, unixepoch('now'));
             END
         """)
+
         # Kategorie indeksów i nazwy sensorów
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS aq_index_category_name (
@@ -142,21 +149,26 @@ class Client:
                 name TEXT NOT NULL
             )
         """)
+
+        # Wypełnienie domyślnych nazwy kategorii indeksów
+        self.__cursor.executemany("""
+            INSERT OR IGNORE INTO aq_index_category_name (value, name)
+            VALUES (?, ?)
+        """, ((idx, val) for idx, val in config.AQ_INDEX_CATEGORIES.items()))
+
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS sensor_type (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 codename TEXT NOT NULL UNIQUE
             )
         """)
-        # Wypełnienie domyślnych typów sensorów i kategorii indeksów
+        # Wypełnienie domyślnych typów sensorów
         self.__cursor.executemany("""
             INSERT OR IGNORE INTO sensor_type (codename)
             VALUES (?)
         """, ((t,) for t in config.AQ_TYPES))
-        self.__cursor.executemany("""
-            INSERT OR IGNORE INTO aq_index_category_name (value, name)
-            VALUES (?, ?)
-        """, ((idx, val) for idx, val in config.AQ_INDEX_CATEGORIES.items()))
+
+
         # Tabela przechowująca indeksy jakości powietrza i triggery
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS aq_index (
@@ -199,6 +211,7 @@ class Client:
             stations (Iterable[api.models.Station]): Kolekcja obiektów Station
                 pobranych z API.
         """
+
         # Wstawianie/ignorowanie miast
         city_params = (
             (s.district, s.voivodeship, s.city)
@@ -353,7 +366,7 @@ class Client:
                 "station_id": station_id,
                 "value": idx.value,
                 "sensor_codename": key,
-                "date": idx.date.isoformat()
+                "date": idx.date.isoformat() if (idx.date is not None) else None
             }
             for key, idx in all_indexes
         )
@@ -386,8 +399,9 @@ class Client:
             FROM station_update
             WHERE station_id = ?
         """, (station_id,)).fetchone()
-        if qry:
+        if qry is not None:
             return datetime.fromtimestamp(qry["last_indexes_update_at"])
+
         return datetime.fromtimestamp(0)
 
     def fetch_station_air_quality_indexes(self, station_id: int) -> list[views.AQIndexView]:

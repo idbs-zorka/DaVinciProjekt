@@ -36,12 +36,12 @@ class IndexCategory:
 
 @dataclass
 class Index:
-    date: datetime
+    date: datetime | None
     value: int | None
 
 @dataclass
 class AirQualityIndexes:
     overall: Index
     sensors: dict[str,Index]
-    index_status: bool
-    index_critical: str
+    index_status: bool | None
+    index_critical: str | None

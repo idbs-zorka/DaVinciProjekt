@@ -1,9 +1,9 @@
 from datetime import datetime
 import requests
 from typing import Callable, Any
-import app.api.models as models
-import app.api.exceptions as exceptions
-import app.config as config
+import src.api.models as models
+import src.api.exceptions as exceptions
+import src.config as config
 
 class Client:
     """
@@ -235,7 +235,7 @@ class Client:
     def fetch_air_quality_indexes(
         self,
         station_id: int
-    ) -> models.AirQualityIndexes | None:
+    ) -> models.AirQualityIndexes:
         """
         Pobiera aktualne indeksy jakości powietrza dla stacji,
         zarówno ogólny, jak i dla poszczególnych sensorów.
@@ -254,24 +254,20 @@ class Client:
             endpoint=f"pjp-api/v1/rest/aqindex/getIndex/{station_id}",
             target="AqIndex"
         )
-        # Brak danych
-        if raw.get("Identyfikator stacji pomiarowej") is None:
-            return None
+
+        get_date = lambda qry: datetime.fromisoformat(raw[qry]) if (raw[qry] is not None) else None
 
         overall = models.Index(
-            date=datetime.fromisoformat(raw["Data wykonania obliczeń indeksu"]),
+            date=get_date("Data wykonania obliczeń indeksu"),
             value=raw["Wartość indeksu"]
         )
-        sensors: dict[str, models.Index] = {}
-        for pollutant in ['NO2', 'O3', 'PM10', 'PM2.5', 'SO2']:
-            date_key = f"Data wykonania obliczeń indeksu dla wskaźnika {pollutant}"
-            value_key = f"Wartość indeksu dla wskaźnika {pollutant}"
-            date_str = raw.get(date_key)
-            if date_str is not None:
-                sensors[pollutant] = models.Index(
-                    date=datetime.fromisoformat(date_str),
-                    value=raw[value_key]
-                )
+        sensors: dict[str, models.Index] = {
+            pollutant: models.Index(
+                date=get_date(f"Data wykonania obliczeń indeksu dla wskaźnika {pollutant}"),
+                value=raw[f"Wartość indeksu dla wskaźnika {pollutant}"]
+            )
+            for pollutant in ['NO2', 'O3', 'PM10', 'PM2.5', 'SO2']
+        }
 
         return models.AirQualityIndexes(
             overall=overall,
