@@ -10,8 +10,9 @@ class MapViewBackend(QObject):
     #               latitude, longitude, name, color
     addMarker = Signal(float,float,str,str)
     resetMarkers = Signal()
-    markerClicked = Signal(str)
+    setPosition = Signal(float,float)
 
+    markerClicked = Signal(str)
     @Slot(str)
     def on_marker_click(self,name: str):
         print(f"Clicked: {name}")
@@ -37,3 +38,6 @@ class MapViewWidget(QWebEngineView):
 
     def reset_markers(self):
         self.backend.resetMarkers.emit()
+
+    def set_position(self,lat: float,lng: float):
+        self.backend.setPosition.emit(lat,lng)

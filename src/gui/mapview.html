@@ -32,7 +32,7 @@
       function addMarker(lat,lon,name,color)
       {
         var marker = L.circleMarker([lat,lon], {
-          radius: 5,
+          radius: 10,
           color: color,
           fillColor: color,
           fillOpacity: 0.8
@@ -48,8 +48,19 @@
         markersGroup.clearLayers()
       }
 
+      function setPosition(lat,lng)
+      {
+        // map.flyTo(L.latLng(lat,lng),map.getZoom(),{duration: 2})
+        map.flyTo([lat, lng], map.getZoom(), {
+          animate: true,
+          duration: 1.5,
+          easeLinearity: 0.4
+        });
+      }
+
       backend.addMarker.connect(addMarker)
       backend.resetMarkers.connect(resetMarkers)
+      backend.setPosition.connect(setPosition)
     });
   </script>
 </body>

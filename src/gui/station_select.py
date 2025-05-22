@@ -1,8 +1,8 @@
 from typing import Sequence
 
-from PySide6.QtCore import QTranslator, Signal, Slot, Qt
+from PySide6.QtCore import QTranslator, Signal, Slot, Qt, QTimer, QEventLoop
 from PySide6.QtWidgets import QWidget, QLineEdit, QComboBox, QFormLayout, QListWidget, QVBoxLayout, QHBoxLayout, \
-    QListWidgetItem
+    QListWidgetItem, QLabel
 
 from src.database.views import StationListView
 from src.repository import Repository
@@ -11,6 +11,32 @@ from dataclasses import dataclass
 from src.fuzzy_seach import fuzzy_search
 
 from src.gui.mapview import MapViewWidget
+from src.config import AQ_TYPES
+
+def wait_for_signal(signal, timeout=5000):
+    """
+    Czeka na emisję danego QtSignal.
+    Zwraca krotkę argumentów, które sygnał przekazał, lub
+    rzuca TimeoutError, jeśli minie `timeout` ms.
+    """
+    loop = QEventLoop()
+    result = []
+
+    def _on_emit(*args):
+        result.append(args)
+        loop.quit()
+
+    # Podłączamy handler i watchdog
+    signal.connect(_on_emit)
+    QTimer.singleShot(timeout, loop.quit)
+
+    loop.exec()  # <–– tu wchodzimy w pętlę aż do quit()
+
+    signal.disconnect(_on_emit)
+    if result:
+        return result[0]       # krotka argumentów
+    else:
+        raise TimeoutError(f"Sygnał nie został wyemitowany w {timeout} ms")
 
 @dataclass
 class FilterState:
@@ -25,17 +51,17 @@ class StationSelectFilter(QWidget):
 
         self.search_query_input = QLineEdit(self)
         self.search_query_input.textChanged.connect(self.on_search_query_changed)
-        self.city_choice = QComboBox(self)
-        self.city_choice.addItems(["Wybierz miasto", *cities])
-        self.city_choice.currentIndexChanged.connect(self.on_city_changed)
+        self.city_combo = QComboBox(self)
+        self.city_combo.addItems(["Wybierz miasto", *cities])
+        self.city_combo.currentIndexChanged.connect(self.on_city_changed)
 
         self.layout = QFormLayout(self)
 
-        self.layout.addRow(self.tr("Szukaj"),self.search_query_input)
-        self.layout.addRow(self.tr("Miasto"),self.city_choice)
+        self.layout.addRow(self.tr("Szukaj"), self.search_query_input)
+        self.layout.addRow(self.tr("Miasto"), self.city_combo)
 
     def current_city(self):
-        return self.city_choice.currentText() if self.city_choice.currentIndex() > 0 else None
+        return self.city_combo.currentText() if self.city_combo.currentIndex() > 0 else None
 
     @Slot(str)
     def on_search_query_changed(self, text: str):
@@ -75,8 +101,15 @@ class StationSelectWidget(QWidget):
         else:
             self.filtered_stations.sort(key=lambda x: x.name)
 
+        self.set_station_list_items(self.filtered_stations)
+
+    def set_station_list_items(self,stations: list[StationListView]):
         self.stations_list_widget.clear()
-        self.stations_list_widget.addItems([station.name for station in self.filtered_stations])
+
+        for st in stations:
+            item = QListWidgetItem(st.name,listview=self.stations_list_widget)
+            item.setData(Qt.ItemDataRole.UserRole,st)
+
 
     def __init__(self,repository: Repository, *args,**kwargs):
         super().__init__(*args,**kwargs)
@@ -94,24 +127,47 @@ class StationSelectWidget(QWidget):
 
         self.stations_list_widget = QListWidget(self)
 
-        for station in self.stations:
-            item = QListWidgetItem(station.name,listview=self.stations_list_widget)
-            item.setData(Qt.ItemDataRole.UserRole,station)
+        self.set_station_list_items(self.stations)
 
-        self.stations_list_widget.itemClicked.connect(lambda x: self.on_station_clicked(x.data(Qt.ItemDataRole.UserRole)))
+        self.stations_list_widget.itemClicked.connect(self.on_station_clicked)
 
         left = QVBoxLayout()
         left.addWidget(self.select_filter_widget)
         left.addWidget(self.stations_list_widget)
 
-        self.map_view = MapViewWidget(parent=self)
-        self.map_view.markerClicked.connect(self.on_station_marker_clicked)
-        self.layout.addLayout(left, stretch=0)
-        self.layout.addWidget(self.map_view, stretch=1)
 
-    def on_station_clicked(self,station: StationListView):
-        self.map_view.add_marker(station.latitude,station.longitude,station.name,'black')
+        aq_index_type_form = QFormLayout()
+        self.aq_index_type_combo = QComboBox()
+        self.aq_index_type_combo.addItems(AQ_TYPES)
+        self.aq_index_type_combo.currentIndexChanged.connect(self.on_aq_index_changed)
+
+        aq_index_type_form.addRow("Indeks", self.aq_index_type_combo)
+
+        self.map_view = MapViewWidget(parent=self)
+
+        wait_for_signal(self.map_view.loadFinished)
+
+        for station in self.stations:
+            self.map_view.add_marker(station.latitude,station.longitude,station.name,'green')
+
+        self.map_view.markerClicked.connect(self.on_station_marker_clicked)
+
+        right = QVBoxLayout()
+        right.addLayout(aq_index_type_form,stretch=0)
+        right.addWidget(self.map_view,stretch=1)
+
+        self.layout.addLayout(left, stretch=0)
+        self.layout.addLayout(right, stretch=1)
+
+    def on_station_clicked(self,item: QListWidgetItem):
+        station = item.data(Qt.ItemDataRole.UserRole)
+        print(f"Trying to set position: {station}")
+        self.map_view.set_position(station.latitude,station.longitude)
 
     def on_station_marker_clicked(self,name):
         station = next(station for station in self.stations if station.name == name)
         print(f"Station clicked: {station}")
+
+    def on_aq_index_changed(self,index: int):
+        index_type = self.aq_index_type_combo.currentText()
+        self.set_station_list_items(self.filtered_stations)
