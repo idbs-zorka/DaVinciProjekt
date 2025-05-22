@@ -1,8 +1,10 @@
 from rapidfuzz import process,fuzz
-from typing import Any
+from typing import Any, Iterable
+
+
 def fuzzy_search(
         query: str,
-        choice: list[str],
+        choice: Iterable[str],
         limit: int | None = None,
         scorer: Any | None = fuzz.WRatio,
         score_cutoff: int | None = None
