@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from src.fuzzy_seach import fuzzy_search
 
-from src.gui.mapview import MapViewWidget
+from src.gui.station_map_view import StationMapViewWidget
 from src.config import AQ_TYPES
 
 def wait_for_signal(signal, timeout=5000):
@@ -110,8 +110,13 @@ class StationSelectWidget(QWidget):
             item = QListWidgetItem(st.name,listview=self.stations_list_widget)
             item.setData(Qt.ItemDataRole.UserRole,st)
 
+    def setup_markers(self):
+        for st in self.stations:
+            self.map_view.add_station(st.latitude,st.longitude,st.id)
+
 
     def __init__(self,repository: Repository, *args,**kwargs):
+        self.repository = repository
         super().__init__(*args,**kwargs)
         self.setMinimumSize(800,400)
         self.layout = QHBoxLayout(self)
@@ -143,14 +148,14 @@ class StationSelectWidget(QWidget):
 
         aq_index_type_form.addRow("Indeks", self.aq_index_type_combo)
 
-        self.map_view = MapViewWidget(parent=self)
+        self.map_view = StationMapViewWidget(parent=self)
 
         wait_for_signal(self.map_view.loadFinished)
 
-        for station in self.stations:
-            self.map_view.add_marker(station.latitude,station.longitude,station.name,'green')
+        self.setup_markers()
 
         self.map_view.markerClicked.connect(self.on_station_marker_clicked)
+        self.map_view.requestStationIndexValue.connect(self.on_request_station_index_value)
 
         right = QVBoxLayout()
         right.addLayout(aq_index_type_form,stretch=0)
@@ -164,10 +169,20 @@ class StationSelectWidget(QWidget):
         print(f"Trying to set position: {station}")
         self.map_view.set_position(station.latitude,station.longitude)
 
-    def on_station_marker_clicked(self,name):
-        station = next(station for station in self.stations if station.name == name)
+    def on_station_marker_clicked(self,station_id: int):
+        station = next(station for station in self.stations if station.id == station_id)
         print(f"Station clicked: {station}")
 
     def on_aq_index_changed(self,index: int):
         index_type = self.aq_index_type_combo.currentText()
         self.set_station_list_items(self.filtered_stations)
+
+
+    def on_request_station_index_value(self,station_id: int):
+        aq_indexes = {
+            idx.codename: idx.value
+            for idx in self.repository.fetch_station_air_quality_indexes(station_id)
+        }
+        current_index = self.aq_index_type_combo.currentText()
+
+        self.map_view.init_index_value(station_id, aq_indexes[current_index] if current_index in aq_indexes else -1)

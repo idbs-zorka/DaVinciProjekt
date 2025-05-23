@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Mapa Leaflet</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <style>
+      html,
+      body,
+      #map {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map">Loading…</div>
+
+    <script>
+      // ————— Initialization —————
+      const map = L.map("map").setView([52.23, 21.01], 13);
+      const markersGroup = L.layerGroup().addTo(map);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+
+      let stations = [];
+      let markersToInit = [];
+
+      // Called from Python to register a new station (with integer ID)
+      function addStation(lat, lng, station_id) {
+        let station = { lat, lng, id: station_id };
+        stations.push(station);
+        markersToInit.push(station);
+      }
+
+      // Center map on given coords
+      function setPosition(lat, lng) {
+        map.flyTo([lat, lng], map.getZoom(), {
+          animate: true,
+          duration: 1.5,
+          easeLinearity: 0.4,
+        });
+      }
+
+      // Reset all markers (e.g. when filter changes)
+      function resetIndexes() {
+        markersGroup.clearLayers();
+        markersToInit = stations.slice();
+      }
+
+      // Decide marker color based on some index value
+      function indexValueToColor(value) {
+        // stub — replace with your logic
+        return 'green'
+      }
+
+      // Called from Python once we have the index value for this station_id
+      function initIndexValue(station_id, value) {
+
+        // find & remove from pending list
+        const idx = stations.findIndex(s => s.id === station_id);
+        if (idx === -1) return;
+        const station = markersToInit.splice(idx, 1)[0];
+
+        // create & style marker
+        const color = indexValueToColor(value);
+        const marker = L.circleMarker([station.lat, station.lng], {
+          radius: 10,
+          color: color,
+          fillColor: color,
+          fillOpacity: 0.8,
+          riseOnHover: true
+        })
+        .addTo(markersGroup)
+        .on("click", () => backend.on_station_selected(station_id));
+      }
+
+      // On map move end, request index values for now-visible stations
+      function handleMoveEnd() {
+        const bounds = map.getBounds();
+
+        const [inView, outOfView] = markersToInit.reduce(
+          ([hit, miss], station) => {
+            if (bounds.contains([station.lat, station.lng])) {
+              hit.push(station);
+            } else {
+              miss.push(station);
+            }
+            return [hit, miss];
+          },
+          [[], []]
+        );
+
+        inView.forEach(station => {
+          backend.request_station_index_value(station.id);
+        });
+
+        markersToInit = outOfView;
+      }
+
+      // ————— QWebChannel hookup —————
+      new QWebChannel(qt.webChannelTransport, channel => {
+        window.backend = channel.objects.backend;
+
+        // Python → JS
+        backend.addStation.connect(addStation);
+        backend.setPosition.connect(setPosition);
+        backend.resetIndexes.connect(resetIndexes);
+        backend.initIndexValue.connect(initIndexValue);
+
+        // Map event
+        map.on("moveend", handleMoveEnd);
+      });
+    </script>
+  </body>
+</html>
