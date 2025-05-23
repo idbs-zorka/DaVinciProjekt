@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication # Biblioteka graficzna
 from repository import Repository
 from gui.station_select import StationSelectWidget
 

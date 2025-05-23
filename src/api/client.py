@@ -65,7 +65,7 @@ class Client:
         try:
             url = self.make_url(endpoint, page, size, args)
             response = requests.get(url,timeout=None)
-            response.raise_for_status()
+            response.raise_for_status() # Sprawdzanie bledow po stronie serwera
             return response.json()
         except requests.exceptions.HTTPError as e:
             payload = e.response.json()
@@ -79,7 +79,7 @@ class Client:
     def __get_collected(
         self,
         endpoint: str,
-        target: str,
+        target: str, # Glowna wartosc zapytania json
         args: dict[str, Any] = None
     ) -> Any:
         """
@@ -97,8 +97,8 @@ class Client:
             TypeError: Jeśli zwrócony fragment JSON nie jest ani listą, ani słownikiem.
         """
         response = self.__get(endpoint, args=args)
-        total_pages = int(response['totalPages'])
-        fragment = response[target]
+        total_pages = int(response['totalPages']) # Odczyt ilosci stron zapytan. Zmienna na koncu pierwszej strony zapytania
+        fragment = response[target] # Wartosc glownego elementu zapytania
 
         if isinstance(fragment, list):
             result = list(fragment)
@@ -118,7 +118,7 @@ class Client:
                 raise TypeError(f"Unexpected target type: {type(fragment).__name__}")
 
         return result
-
+    # Opcjonalna optymalizacja
     def __get_each(
         self,
         endpoint: str,
@@ -185,12 +185,15 @@ class Client:
         Returns:
             list[models.StationMeta]: Lista obiektów StationMeta.
         """
-        params = {
-            k: v for k, v in (
-                ("miasto", city),
-                ("kod-stacji", station_codename)
-            ) if v is not None
-        }
+
+        params = dict()
+
+        if city is not None:
+            params.update({"miasto": city})
+
+        if station_codename is not None:
+            params.update({"kod-stacji": station_codename})
+
         raw = self.__get_collected(
             endpoint="pjp-api/v1/rest/metadata/stations",
             target="Lista metadanych stacji pomiarowych",
@@ -255,12 +258,15 @@ class Client:
             target="AqIndex"
         )
 
-        get_date = lambda qry: datetime.fromisoformat(raw[qry]) if (raw[qry] is not None) else None
+        # Jezeli nie ma podanego czasu to zwraca None uproszczenia czytelnosci
+        get_date = lambda key: datetime.fromisoformat(raw[key]) if (raw[key] is not None) else None
 
+        # Dla wartosci ogolnej
         overall = models.Index(
             date=get_date("Data wykonania obliczeń indeksu"),
             value=raw["Wartość indeksu"]
         )
+        # Dla poszczegolnych wartosci
         sensors: dict[str, models.Index] = {
             pollutant: models.Index(
                 date=get_date(f"Data wykonania obliczeń indeksu dla wskaźnika {pollutant}"),

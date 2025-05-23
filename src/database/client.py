@@ -16,9 +16,10 @@ class Client:
       - przechowywanie i aktualizację danych o stacjach oraz wskaźnikach jakości powietrza,
       - odczyt widoków z tabel.
     """
-
+    # Dodatkowa stała której nie ma w opowiedzi z API a którą wykorzystujemy
     OVERALL_SENSOR_TYPE_CODENAME: str = "Ogólny"
 
+    # Tworzymy enumerator
     class GlobalUpdateIds(Enum):
         """
         Identyfikatory rekordów w tabeli `global_update` służące
@@ -26,24 +27,24 @@ class Client:
         """
         STATION_LIST = 0
 
-    def __init__(self, file: str):
+    def __init__(self, database_filepath: str):
         """
         Inicjalizuje połączenie z bazą danych i tworzy niezbędne tabele.
 
         Args:
-            file (str): Ścieżka do pliku SQLite.
+            database_filepath (str): Ścieżka do pliku SQLite.
         """
-        self.__conn = sqlite3.connect(file)
-        self.__conn.row_factory = sqlite3.Row
+        self.__conn = sqlite3.connect(database_filepath)
+        self.__conn.row_factory = sqlite3.Row # Możliwość odwołania się do kolumn bazy
         self.__cursor = self.__conn.cursor()
-        self.__populate_tables()
+        self.__populate_tables() # Tworzy struktury bazy i wypełnia stałymi elementami
 
     def __populate_tables(self):
         """
         Tworzy w bazie wszystkie potrzebne tabele i triggery,
         jeżeli jeszcze nie istnieją, oraz inicjalizuje podstawowe wartości.
         """
-        # Tabela globalnych znaczników aktualizacji
+        # Tabela globalnych znaczników ostatniej aktualizacji
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS global_update (
                 id INTEGER PRIMARY KEY,
@@ -57,7 +58,7 @@ class Client:
                 VALUES (?)
         """, [(member.value,) for member in self.GlobalUpdateIds])
 
-        # Tabele stacji i powiązane
+        # Tabele stacji i powiązanych miast
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS city (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,17 +67,7 @@ class Client:
                 city TEXT NOT NULL UNIQUE
             )
         """)
-
-        self.__cursor.execute("""
-            CREATE TABLE IF NOT EXISTS station_update (
-                station_id INTEGER UNIQUE,
-                last_sensors_update_at TIMESTAMP NOT NULL DEFAULT 0,
-                last_indexes_update_at TIMESTAMP NOT NULL DEFAULT 0,
-                last_meta_update_at TIMESTAMP NOT NULL DEFAULT 0,
-                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE
-            )
-        """)
-
+        # Tabelka z podstawowymi parametrami stacji
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS station (
                 id INTEGER PRIMARY KEY,
@@ -90,7 +81,20 @@ class Client:
             )
         """)
 
-        # Triggery aktualizujące global_update przy zmianach w station
+        # Tabela ostatnich czasow atualizacji sensorów, indeksów, metadanych dla poszczególnych stacji
+        self.__cursor.execute("""
+            CREATE TABLE IF NOT EXISTS station_update (
+                station_id INTEGER UNIQUE,
+                last_sensors_update_at TIMESTAMP NOT NULL DEFAULT 0,
+                last_indexes_update_at TIMESTAMP NOT NULL DEFAULT 0,
+                last_meta_update_at TIMESTAMP NOT NULL DEFAULT 0,
+                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE
+            )
+        """)
+
+        # Triggery aktualizujące global_update przy zmianach w station.
+        # unixepoch - odpowiedni format czasu
+        # GlobalUpdateIds.STATION_LIST.value - stala o wartosci zero
         self.__cursor.execute(f"""
             CREATE TRIGGER IF NOT EXISTS tgr_on_insert_station
             AFTER INSERT ON station
@@ -142,7 +146,7 @@ class Client:
             END
         """)
 
-        # Kategorie indeksów i nazwy sensorów
+        # Kategorie indeksów i nazwy sensorów pod wzgledem jakosciowym
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS aq_index_category_name (
                 value INTEGER PRIMARY KEY,
@@ -169,7 +173,7 @@ class Client:
         """, ((t,) for t in config.AQ_TYPES))
 
 
-        # Tabela przechowująca indeksy jakości powietrza i triggery
+        # Tabela przechowująca indeksy (wartosci) jakości powietrza dla sensorow wysteoujacych w danych stacjach
         self.__cursor.execute("""
             CREATE TABLE IF NOT EXISTS aq_index (
                 station_id INT,
@@ -267,7 +271,7 @@ class Client:
             SELECT s.id, s.name, s.latitude, s.longitude, c.city
             FROM station AS s
             JOIN city AS c ON c.id = s.city_id
-        """)
+        """).fetchall()
         return [
             views.StationListView(
                 id=row["id"],
@@ -320,13 +324,7 @@ class Client:
 
     def fetch_station_detail_view(self,station_id: int) -> views.StationDetailsView:
         """
-        Zwraca widok szczegółów stacji.
 
-        Returns:
-            views.StationDetailsView: Szczegółowy widok jednej stacji.
-
-        Raises:
-            NotImplementedError: Metoda jeszcze nie zaimplementowana.
         """
 
         qry = self.__cursor.execute("""
@@ -376,6 +374,7 @@ class Client:
             indexes (api.models.AirQualityIndexes): Obiekt zawierający
                 ogólny indeks oraz indeksy poszczególnych sensorów.
         """
+        # Laczenie w jedna tabele indeksu ogolnego 'ogólny' z reszta indeksow odczytanych
         all_indexes = (
             (self.OVERALL_SENSOR_TYPE_CODENAME, indexes.overall),
             *indexes.sensors.items()

@@ -1,5 +1,7 @@
-import src.api.client as api
-import src.database.client as database
+from src.api.client import Client as APIClient
+from src.database.client import Client as DatabaseClient
+import src.database.views as views
+
 from datetime import datetime
 
 from src.config import UPDATE_INTERVALS
@@ -15,7 +17,7 @@ class Repository:
       - pobieranie i aktualizację szczegółowych danych jakości powietrza dla konkretnej stacji.
     """
 
-    def __init__(self, api_client: api.Client, database_client: database.Client):
+    def __init__(self, api_client: APIClient, database_client: DatabaseClient):
         """
         Inicjalizuje instancję repozytorium.
 
@@ -26,6 +28,7 @@ class Repository:
         self._api_client = api_client
         self._database_client = database_client
 
+    # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
     def update_stations(self):
         """
         Pobiera aktualną listę stacji z API i zapisuje ją w bazie danych.
@@ -39,7 +42,7 @@ class Repository:
             stations=api_stations
         )
 
-    def get_station_list_view(self) -> list[database.views.StationListView]:
+    def get_station_list_view(self) -> list[views.StationListView]:
         """
         Zwraca widok listy stacji, odświeżając dane jeśli upłynął zdefiniowany interwał.
 
@@ -57,9 +60,10 @@ class Repository:
 
         return self._database_client.get_station_list_view()
 
-    def fetch_station_details_view(self, station_id: int) -> database.views.StationDetailsView:
+    def fetch_station_details_view(self, station_id: int) -> views.StationDetailsView:
         return self._database_client.fetch_station_detail_view(station_id)
 
+    # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
     def update_station_air_quality_indexes(self, station_id: int):
         """
         Pobiera i aktualizuje wskaźniki jakości powietrza dla danej stacji.
@@ -74,7 +78,7 @@ class Repository:
             indexes=air_quality_indexes
         )
 
-    def fetch_station_air_quality_indexes(self, station_id: int) -> list[database.views.AQIndexView]:
+    def fetch_station_air_quality_indexes(self, station_id: int) -> list[views.AQIndexView]:
         """
         Zwraca listę wskaźników jakości powietrza, odświeżając dane
         gdy minął określony interwał czasu.
