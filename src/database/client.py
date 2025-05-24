@@ -180,6 +180,7 @@ class Client:
                 sensor_type_id INT,
                 value INT,
                 record_date DATETIME,
+                PRIMARY KEY (station_id,sensor_type_id),
                 FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE,
                 FOREIGN KEY (sensor_type_id) REFERENCES sensor_type(id),
                 FOREIGN KEY (value) REFERENCES aq_index_category_name(value)
@@ -389,15 +390,18 @@ class Client:
             for key, idx in all_indexes
         )
         self.__cursor.executemany("""
-            INSERT OR REPLACE INTO aq_index
-            (station_id, sensor_type_id, value, record_date)
-            SELECT
-              :station_id,
-              st.id,
-              :value,
-              :date
-            FROM sensor_type AS st
-            WHERE st.codename = :sensor_codename
+            INSERT INTO aq_index (
+                station_id,
+                sensor_type_id,
+                value,
+                record_date
+            )
+            VALUES (
+                :station_id,
+                (SELECT id FROM sensor_type WHERE codename = :sensor_codename),
+                :value,
+                :date
+            )
         """, params)
         self.__conn.commit()
 
@@ -422,30 +426,33 @@ class Client:
 
         return datetime.fromtimestamp(0)
 
-    def fetch_station_air_quality_indexes(self, station_id: int) -> list[views.AQIndexView]:
+    def fetch_station_air_quality_index_value(self, station_id: int, type_codename: str) -> int | None:
         """
-        Zwraca widoki indeksów jakości powietrza dla podanej stacji.
+        Zwraca wartość indeksu jakości powietrza dla podanej stacji i typu sensora.
 
         Args:
             station_id (int): Identyfikator stacji.
+            type_codename (str): Codename sensora (np. "pm10", "so2" itp.).
 
         Returns:
-            list[views.AQIndexView]: Lista widoków z nazwą sensora, wartością i kategorią.
+            int | None: Wartość indeksu, lub None jeśli brak danych.
         """
-        qry = self.__cursor.execute("""
+        row = self.__cursor.execute("""
             SELECT
-                st.codename AS codename,
-                aq.value AS value,
-                cat.name AS category
+                aq.value AS value
             FROM aq_index AS aq
-            JOIN sensor_type AS st ON st.id = aq.sensor_type_id
-            JOIN aq_index_category_name AS cat ON cat.value = aq.value
-            WHERE aq.station_id = ?
-        """, (station_id,)).fetchall()
-        return [
-            views.AQIndexView(
-                codename=row["codename"],
-                value=row["value"],
-                category=row["category"]
-            ) for row in qry
-        ]
+            JOIN sensor_type AS st
+                 ON aq.sensor_type_id = st.id
+            WHERE aq.station_id = :station_id
+              AND st.codename   = :type
+        """, {
+            "station_id": station_id,
+            "type": type_codename
+        }).fetchone()
+
+        # Jeżeli nie ma żadnego wiersza, fetchone() zwróci None
+        if row is None:
+            return None
+
+        # W przeciwnym razie zwracamy wartość
+        return row['value']

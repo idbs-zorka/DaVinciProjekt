@@ -42,7 +42,7 @@
 
       // Center map on given coords
       function setPosition(lat, lng) {
-        map.flyTo([lat, lng], map.getZoom(), {
+        map.flyTo([lat, lng], 10, {
           animate: true,
           duration: 1.5,
           easeLinearity: 0.4,
@@ -52,28 +52,42 @@
       // Reset all markers (e.g. when filter changes)
       function resetIndexes() {
         markersGroup.clearLayers();
-        markersToInit = stations.slice();
+        markersToInit = stations
+        initMarkersInCurrentBounds()
       }
 
       // Decide marker color based on some index value
       function indexValueToColor(value) {
-        // stub — replace with your logic
-        return 'green'
+        switch (value) {
+          case 0: // Very Good
+            return '#00e400'; // green
+          case 1: // Good
+            return '#a3e635'; // light green
+          case 2: // Moderate
+            return '#ffff00'; // yellow
+          case 3: // Unhealthy for Sensitive Groups
+            return '#ff7e00'; // orange
+          case 4: // Unhealthy
+            return '#ff0000'; // red
+          case 5: // Very Unhealthy / Hazardous
+            return '#7e0023'; // maroon
+          default:
+            return '#ffffff'; // fallback: white
+        }
       }
 
       // Called from Python once we have the index value for this station_id
       function initIndexValue(station_id, value) {
-
         // find & remove from pending list
         const idx = stations.findIndex(s => s.id === station_id);
         if (idx === -1) return;
-        const station = markersToInit.splice(idx, 1)[0];
+        const station = stations[idx]
 
         // create & style marker
         const color = indexValueToColor(value);
         const marker = L.circleMarker([station.lat, station.lng], {
           radius: 10,
-          color: color,
+          color: 'black',
           fillColor: color,
           fillOpacity: 0.8,
           riseOnHover: true
@@ -82,8 +96,8 @@
         .on("click", () => backend.on_station_selected(station_id));
       }
 
-      // On map move end, request index values for now-visible stations
-      function handleMoveEnd() {
+      function initMarkersInCurrentBounds()
+      {
         const bounds = map.getBounds();
 
         const [inView, outOfView] = markersToInit.reduce(
@@ -103,6 +117,11 @@
         });
 
         markersToInit = outOfView;
+      }
+
+      // On map move end, request index values for now-visible stations
+      function handleMoveEnd() {
+          initMarkersInCurrentBounds()
       }
 
       // ————— QWebChannel hookup —————

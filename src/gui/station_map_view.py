@@ -54,4 +54,5 @@ class StationMapViewWidget(QWebEngineView):
         self.backend.setPosition.emit(lat,lng)
 
     def init_index_value(self,station_id: int,value: int):
+        print("Init")
         self.backend.initIndexValue.emit(station_id,value)

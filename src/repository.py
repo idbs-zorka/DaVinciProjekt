@@ -78,7 +78,7 @@ class Repository:
             indexes=air_quality_indexes
         )
 
-    def fetch_station_air_quality_indexes(self, station_id: int) -> list[views.AQIndexView]:
+    def fetch_station_air_quality_index_value(self, station_id: int,type_codename: str) -> int:
         """
         Zwraca listę wskaźników jakości powietrza, odświeżając dane
         gdy minął określony interwał czasu.
@@ -95,4 +95,4 @@ class Repository:
         if elapsed >= UPDATE_INTERVALS['aq_indexes']:
             self.update_station_air_quality_indexes(station_id)
 
-        return self._database_client.fetch_station_air_quality_indexes(station_id)
+        return self._database_client.fetch_station_air_quality_index_value(station_id, type_codename)

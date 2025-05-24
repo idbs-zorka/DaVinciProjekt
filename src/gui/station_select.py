@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Sequence
 
+import logging
 from PySide6.QtCore import Signal, Slot, Qt, QTimer, QEventLoop
 from PySide6.QtWidgets import QWidget, QLineEdit, QComboBox, QFormLayout, QListWidget, QVBoxLayout, QHBoxLayout, \
     QListWidgetItem
@@ -82,7 +83,7 @@ class StationSelectWidget(QWidget):
     def __init__(self,repository: Repository, *args,**kwargs):
         self.repository = repository
         super().__init__(*args,**kwargs)
-        self.setMinimumSize(1200,800)
+        self.setMinimumSize(1200,600)
         self.layout = QHBoxLayout(self)
 
         self.stations = repository.get_station_list_view()
@@ -106,6 +107,7 @@ class StationSelectWidget(QWidget):
 
 
         aq_index_type_form = QFormLayout()
+
         self.aq_index_type_combo = QComboBox()
         self.aq_index_type_combo.addItems(AQ_TYPES)
         self.aq_index_type_combo.currentIndexChanged.connect(self.on_aq_index_changed)
@@ -161,8 +163,6 @@ class StationSelectWidget(QWidget):
         for st in self.stations:
             self.map_view.add_station(st.latitude,st.longitude,st.id)
 
-
-
     def on_station_clicked(self,item: QListWidgetItem):
         station = item.data(Qt.ItemDataRole.UserRole)
         print(f"Trying to set position: {station}")
@@ -173,15 +173,15 @@ class StationSelectWidget(QWidget):
         print(f"Station clicked: {station}")
 
     def on_aq_index_changed(self,index: int):
-        index_type = self.aq_index_type_combo.currentText()
-        self.set_station_list_items(self.filtered_stations)
+        self.map_view.reset_indexes()
 
 
     def on_request_station_index_value(self,station_id: int):
-        aq_indexes = {
-            idx.codename: idx.value
-            for idx in self.repository.fetch_station_air_quality_indexes(station_id)
-        }
         current_index = self.aq_index_type_combo.currentText()
+        logging.info(f"Requesting index value: {station_id} : {current_index}")
+        value = self.repository.fetch_station_air_quality_index_value(station_id,current_index)
 
-        self.map_view.init_index_value(station_id, aq_indexes[current_index] if current_index in aq_indexes else -1)
+        if value is None:
+            value = -1
+
+        self.map_view.init_index_value(station_id,value)
