@@ -53,6 +53,7 @@ class StationMapViewWidget(QWebEngineView):
     def set_position(self,lat: float,lng: float):
         self.backend.setPosition.emit(lat,lng)
 
+    @Slot(int,int)
     def init_index_value(self,station_id: int,value: int):
         print("Init")
         self.backend.initIndexValue.emit(station_id,value)

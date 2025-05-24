@@ -28,6 +28,9 @@ class Repository:
         self._api_client = api_client
         self._database_client = database_client
 
+    def clone(self):
+        return Repository(self._api_client,DatabaseClient(self._database_client.filepath))
+
     # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
     def update_stations(self):
         """

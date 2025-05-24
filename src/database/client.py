@@ -34,6 +34,7 @@ class Client:
         Args:
             database_filepath (str): Ścieżka do pliku SQLite.
         """
+        self.filepath = database_filepath
         self.__conn = sqlite3.connect(database_filepath)
         self.__conn.row_factory = sqlite3.Row # Możliwość odwołania się do kolumn bazy
         self.__cursor = self.__conn.cursor()
@@ -191,9 +192,10 @@ class Client:
             AFTER INSERT ON aq_index
             FOR EACH ROW
             BEGIN
-                INSERT OR REPLACE INTO station_update
-                (station_id, last_indexes_update_at)
-                VALUES (NEW.station_id, unixepoch('now'));
+                INSERT INTO station_update(station_id, last_indexes_update_at)
+                VALUES (NEW.station_id, unixepoch('now'))
+                ON CONFLICT(station_id) DO UPDATE
+                  SET last_indexes_update_at = excluded.last_indexes_update_at;
             END
         """)
         self.__cursor.execute(f"""
@@ -201,9 +203,10 @@ class Client:
             AFTER UPDATE ON aq_index
             FOR EACH ROW
             BEGIN
-                INSERT OR REPLACE INTO station_update
-                (station_id, last_indexes_update_at)
-                VALUES (NEW.station_id, unixepoch('now'));
+                INSERT INTO station_update(station_id, last_indexes_update_at)
+                VALUES (NEW.station_id, unixepoch('now'))
+                ON CONFLICT(station_id) DO UPDATE
+                  SET last_indexes_update_at = excluded.last_indexes_update_at;
             END
         """)
         self.__conn.commit()
@@ -402,6 +405,10 @@ class Client:
                 :value,
                 :date
             )
+            ON CONFLICT(station_id,sensor_type_id) DO UPDATE
+                SET
+                    value=EXCLUDED.value,
+                    record_date=EXCLUDED.record_date
         """, params)
         self.__conn.commit()
 

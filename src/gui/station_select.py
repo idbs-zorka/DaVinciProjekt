@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import logging
-from PySide6.QtCore import Signal, Slot, Qt, QTimer, QEventLoop
+from PySide6.QtCore import Signal, Slot, Qt, QTimer, QEventLoop, QThreadPool, QRunnable, QObject
 from PySide6.QtWidgets import QWidget, QLineEdit, QComboBox, QFormLayout, QListWidget, QVBoxLayout, QHBoxLayout, \
     QListWidgetItem
 
@@ -78,10 +78,33 @@ class StationSelectFilter(QWidget):
         ))
 
 
+class StationIndexFetcher(QRunnable):
+    class Signals(QObject):
+        finished = Signal(int,int)
+
+    def __init__(self,station_id: int,index_type: str,repository: Repository):
+        super().__init__()
+        self.station_id = station_id
+        self.index_type = index_type
+        self.repository = repository
+        self.signals = self.Signals()
+
+    def run(self):
+        own_repository = self.repository.clone()
+        value = own_repository.fetch_station_air_quality_index_value(self.station_id,self.index_type)
+
+        if value is None:
+             value = -1
+
+        self.signals.finished.emit(self.station_id,value)
+
+
 class StationSelectWidget(QWidget):
 
     def __init__(self,repository: Repository, *args,**kwargs):
         self.repository = repository
+        self.thread_pool = QThreadPool.globalInstance()
+
         super().__init__(*args,**kwargs)
         self.setMinimumSize(1200,600)
         self.layout = QHBoxLayout(self)
@@ -163,25 +186,28 @@ class StationSelectWidget(QWidget):
         for st in self.stations:
             self.map_view.add_station(st.latitude,st.longitude,st.id)
 
+    @Slot(QListWidgetItem)
     def on_station_clicked(self,item: QListWidgetItem):
         station = item.data(Qt.ItemDataRole.UserRole)
         print(f"Trying to set position: {station}")
         self.map_view.set_position(station.latitude,station.longitude)
 
+    @Slot(int)
     def on_station_marker_clicked(self,station_id: int):
         station = next(station for station in self.stations if station.id == station_id)
         print(f"Station clicked: {station}")
 
+
+    @Slot(int)
     def on_aq_index_changed(self,index: int):
         self.map_view.reset_indexes()
 
-
+    @Slot(int)
     def on_request_station_index_value(self,station_id: int):
         current_index = self.aq_index_type_combo.currentText()
         logging.info(f"Requesting index value: {station_id} : {current_index}")
-        value = self.repository.fetch_station_air_quality_index_value(station_id,current_index)
 
-        if value is None:
-            value = -1
+        task = StationIndexFetcher(station_id,current_index,self.repository)
+        task.signals.finished.connect(self.map_view.init_index_value)
 
-        self.map_view.init_index_value(station_id,value)
+        self.thread_pool.start(task)

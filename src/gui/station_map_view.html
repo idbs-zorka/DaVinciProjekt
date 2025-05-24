@@ -24,7 +24,11 @@
 
     <script>
       // ————— Initialization —————
-      const map = L.map("map").setView([52.23, 21.01], 13);
+      const map = L.map("map",{
+        center: [52.23,21.01],
+        zoom: 12,
+        minZoom: 10
+      });
       const markersGroup = L.layerGroup().addTo(map);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
@@ -42,7 +46,7 @@
 
       // Center map on given coords
       function setPosition(lat, lng) {
-        map.flyTo([lat, lng], 10, {
+        map.flyTo([lat, lng], map.getZoom(), {
           animate: true,
           duration: 1.5,
           easeLinearity: 0.4,
@@ -72,7 +76,19 @@
           case 5: // Very Unhealthy / Hazardous
             return '#7e0023'; // maroon
           default:
-            return '#ffffff'; // fallback: white
+            return 'grey'; // fallback: white
+        }
+      }
+
+      function indexToMarkerAttribute(value) {
+        let color = indexToMarkerAttribute(value)
+        let opacity = (value == -1) ?  0.1 : 1
+        return {
+          radius: 10,
+          color: color,
+          fillColor: color,
+          opacity: opacity,
+          fillOpacity: opacity
         }
       }
 
@@ -85,11 +101,13 @@
 
         // create & style marker
         const color = indexValueToColor(value);
+        const opacity = (value == -1) ? 0.5 : 0.9;
         const marker = L.circleMarker([station.lat, station.lng], {
           radius: 10,
-          color: 'black',
+          color: color,
           fillColor: color,
-          fillOpacity: 0.8,
+          opacity: opacity,
+          fillOpacity: opacity,
           riseOnHover: true
         })
         .addTo(markersGroup)
