@@ -7,8 +7,8 @@
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script> <!-- Polaczenie do biblioteki leaflet -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script> <!-- Script ktory pozwala laczyc sie pythonem -->
     <style>
       html,
       body,
@@ -25,7 +25,7 @@
     <script>
       // ————— Initialization —————
       const map = L.map("map",{
-        center: [52.23,21.01],
+        center: [52.23,21.01], // wspolrzedne geograficzne punktu startowego
         zoom: 12,
         minZoom: 10
       });
@@ -80,18 +80,6 @@
         }
       }
 
-      function indexToMarkerAttribute(value) {
-        let color = indexToMarkerAttribute(value)
-        let opacity = (value == -1) ?  0.1 : 1
-        return {
-          radius: 10,
-          color: color,
-          fillColor: color,
-          opacity: opacity,
-          fillOpacity: opacity
-        }
-      }
-
       // Called from Python once we have the index value for this station_id
       function initIndexValue(station_id, value) {
         // find & remove from pending list
@@ -101,7 +89,7 @@
 
         // create & style marker
         const color = indexValueToColor(value);
-        const opacity = (value == -1) ? 0.5 : 0.9;
+        const opacity = (value == -1) ? 0.5 : 0.9; // Ustaw wieksza przezroczystosc dla obiektu o wartosci -1 (obiekt nie ma wartosci indeksu)
         const marker = L.circleMarker([station.lat, station.lng], {
           radius: 10,
           color: color,
@@ -117,7 +105,8 @@
       function initMarkersInCurrentBounds()
       {
         const bounds = map.getBounds();
-
+        
+        //Dzieli tablice na dwa widoki gdzie markery sa widoczne a w drugiej niewidoczne
         const [inView, outOfView] = markersToInit.reduce(
           ([hit, miss], station) => {
             if (bounds.contains([station.lat, station.lng])) {

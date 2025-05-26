@@ -1,12 +1,13 @@
-from PySide6.QtCore import Qt, QObject, Slot, QUrl, Signal
-from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import QWebEnginePage
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtQuickWidgets import QQuickWidget
 from pathlib import Path
+
+from PySide6.QtCore import QObject, Slot, QUrl, Signal
+from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWebEngineWidgets import QWebEngineView
+
 
 class MapViewBackend(QObject):
 
+    # Python wysyla do mapy
     #               latitude, longitude, id
     addStation = Signal(float, float, int)
     setPosition = Signal(float, float)
@@ -14,6 +15,7 @@ class MapViewBackend(QObject):
     #                   station_id, index_value
     initIndexValue = Signal(int, int)
 
+    # Mapa wysyla do pythona
     stationSelected = Signal(int)
     @Slot(int)
     def on_station_selected(self,station_id: int):
@@ -28,20 +30,21 @@ class MapViewBackend(QObject):
 
 class StationMapViewWidget(QWebEngineView):
 
-    backend = MapViewBackend()
+    backend = MapViewBackend() # Na potrzeby integracji JavaScript
 
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
 
         map_path = Path(__file__).with_name("station_map_view.html").resolve()
 
-        self.settings().setAttribute(self.settings().WebAttribute.LocalContentCanAccessRemoteUrls,True)
+        self.settings().setAttribute(self.settings().WebAttribute.LocalContentCanAccessRemoteUrls,True) #Ustawianie mozliwosci komunikacji sieciowej dla widgetu
         self.load(QUrl.fromLocalFile(map_path))
-        self.channel = QWebChannel()
-        self.channel.registerObject("backend",self.backend)
-        self.page().setWebChannel(self.channel)
 
-        self.markerClicked = self.backend.stationSelected
+        self.channel = QWebChannel()
+        self.page().setWebChannel(self.channel)
+        self.channel.registerObject("backend",self.backend) # Przekazanie obiektu do JavaScriptu
+
+        self.stationSelected = self.backend.stationSelected
         self.requestStationIndexValue = self.backend.requestStationIndexValue
 
     def add_station(self,lat: float,lng:float,station_id: int):

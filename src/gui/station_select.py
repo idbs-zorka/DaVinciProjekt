@@ -140,12 +140,12 @@ class StationSelectWidget(QWidget):
 
         self.map_view = StationMapViewWidget(parent=self)
 
-        wait_for_signal(self.map_view.loadFinished)
+        wait_for_signal(self.map_view.loadFinished) # oczekiwanie na zaladowanie mapy
 
         self.setup_markers()
 
-        self.map_view.markerClicked.connect(self.on_station_marker_clicked)
-        self.map_view.requestStationIndexValue.connect(self.on_request_station_index_value)
+        self.map_view.stationSelected.connect(self.on_station_marker_clicked) #Reaguje na klikniecie
+        self.map_view.requestStationIndexValue.connect(self.on_request_station_index_value) # Zadanie wartosci indeksu stacji w czesci wyswietlanej
 
         right = QVBoxLayout()
         right.addLayout(aq_index_type_form,stretch=0)
