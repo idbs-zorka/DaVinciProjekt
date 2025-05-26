@@ -1,9 +1,11 @@
 from datetime import datetime
-import requests
 from typing import Callable, Any
-import src.api.models as models
+
+import requests
+
 import src.api.exceptions as exceptions
-import src.config as config
+import src.api.models as models
+
 
 class Client:
     """
@@ -213,28 +215,6 @@ class Client:
             for entry in raw
         ]
 
-    def fetch_station_sensors(self, station_id: int) -> list[models.Sensor]:
-        """
-        Pobiera listę dostępnych sensorów (stanowisk pomiarowych) dla danej stacji.
-
-        Args:
-            station_id (int): Identyfikator stacji.
-
-        Returns:
-            list[models.Sensor]: Lista obiektów Sensor zawierających identyfikator i kod wskaźnika.
-        """
-        raw = self.__get_collected(
-            endpoint=f"pjp-api/v1/rest/station/sensors/{station_id}",
-            target="Lista stanowisk pomiarowych dla podanej stacji"
-        )
-        return [
-            models.Sensor(
-                id=entry["Identyfikator stanowiska"],
-                codename=entry["Wskaźnik - kod"]
-            )
-            for entry in raw
-        ]
-
     def fetch_air_quality_indexes(
         self,
         station_id: int
@@ -281,3 +261,36 @@ class Client:
             index_status=raw["Status indeksu ogólnego dla stacji pomiarowej"],
             index_critical=raw["Kod zanieczyszczenia krytycznego"]
         )
+
+    def fetch_station_sensors(self,station_id: int) -> list[models.Sensor]:
+        raw = self.__get_collected(
+            endpoint=f"pjp-api/v1/rest/station/sensors/{station_id}",
+            target="Lista stanowisk pomiarowych dla podanej stacji"
+        )
+
+        return [
+            models.Sensor(
+                id=raw['Identyfikator stanowiska'],
+                codename=raw['Wskaźnik - kod'],
+                name=raw['Wskaźnik']
+            )
+        ]
+
+    def fetch_sensor_data(self,sensor_id: int) -> list[models.SensorData]:
+        result: list[models.SensorData] = []
+
+        def collect_data(data):
+            result.extend(
+                SensorDataView(
+                    date=datetime.fromisoformat(entry['Data']),
+                    value=entry['Wartość']
+                ) for entry in data
+            )
+
+        self.__get_each(
+            endpoint=f"pjp-api/v1/rest/data/getData/{sensor_id}",
+            target=f"Lista danych pomiarowych",
+            callback=collect_data
+        )
+
+        return result

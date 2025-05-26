@@ -99,3 +99,16 @@ class Repository:
             self.update_station_air_quality_indexes(station_id)
 
         return self._database_client.fetch_station_air_quality_index_value(station_id, type_codename)
+
+    def update_station_sensors(self,station_id: int):
+        stations = self._api_client.fetch_station_sensors(station_id)
+        self._database_client.update_station_sensors(station_id, stations)
+
+    def fetch_station_sensors(self,station_id: int) -> list[views.SensorView]:
+        last_update_at = self._database_client.fetch_last_station_sensors_update(station_id)
+        elapsed = datetime.now() - last_update_at
+
+        if elapsed >= UPDATE_INTERVALS['sensors']:
+            self.update_station_sensors(station_id)
+
+        return self._database_client.fetch_station_sensors(station_id)

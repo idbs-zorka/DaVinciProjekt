@@ -2,8 +2,8 @@ import typing
 from datetime import datetime
 import sqlite3
 from enum import Enum
-
-import src.api.client as api
+from src.api.client import Client as APIClient
+import src.api.models as APIModels
 import src.database.views as views
 from src.api.models import IndexCategory
 import src.config as config
@@ -187,7 +187,7 @@ class Client:
                 FOREIGN KEY (value) REFERENCES aq_index_category_name(value)
             )
         """)
-        self.__cursor.execute(f"""
+        self.__cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS tgr_on_insert_aq_index
             AFTER INSERT ON aq_index
             FOR EACH ROW
@@ -195,10 +195,10 @@ class Client:
                 INSERT INTO station_update(station_id, last_indexes_update_at)
                 VALUES (NEW.station_id, unixepoch('now'))
                 ON CONFLICT(station_id) DO UPDATE
-                  SET last_indexes_update_at = excluded.last_indexes_update_at;
+                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
             END
         """)
-        self.__cursor.execute(f"""
+        self.__cursor.execute("""
             CREATE TRIGGER IF NOT EXISTS tgr_on_update_aq_index
             AFTER UPDATE ON aq_index
             FOR EACH ROW
@@ -206,12 +206,55 @@ class Client:
                 INSERT INTO station_update(station_id, last_indexes_update_at)
                 VALUES (NEW.station_id, unixepoch('now'))
                 ON CONFLICT(station_id) DO UPDATE
-                  SET last_indexes_update_at = excluded.last_indexes_update_at;
+                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
             END
+        """)
+
+        self.__cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sensor (
+                id INTEGER PRIMARY KEY,
+                station_id INTEGER,
+                sensor_type_id INTEGER,
+                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE,
+                FOREIGN KEY (sensor_type_id) REFERENCES sensor_type(id)
+            )
+        """)
+
+        self.__cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS tgr_on_insert_sensor
+            AFTER INSERT ON sensor
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO station_update(station_id, last_sensors_update_at)
+                VALUES (NEW.station_id, unixepoch('now'))
+                ON CONFLICT(station_id) DO UPDATE
+                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
+            END
+        """)
+        self.__cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS tgr_on_update_sensor
+            AFTER UPDATE ON sensor
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO station_update(station_id, last_sensors_update_at)
+                VALUES (NEW.station_id, unixepoch('now'))
+                ON CONFLICT(station_id) DO UPDATE
+                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
+            END
+        """)
+
+        self.__cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sensor_data (
+                sensor_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                value REAL NOT NULL,
+                PRIMARY KEY(sensor_id,date),
+                FOREIGN KEY (sensor_id) REFERENCES sensor(id)
+            )
         """)
         self.__conn.commit()
 
-    def update_stations(self, stations: typing.Iterable[api.models.Station]):
+    def update_stations(self, stations: typing.Iterable[APIModels.Station]):
         """
         Zapisuje lub uaktualnia listę stacji wraz z informacjami o mieście.
 
@@ -286,7 +329,7 @@ class Client:
             ) for row in qry
         ]
 
-    def update_station_meta(self, meta: list[api.models.StationMeta]):
+    def update_station_meta(self, meta: list[APIModels.StationMeta]):
         """
         Zapisuje lub uaktualnia metadane stacji (międzynarodowy kod, daty, typ).
 
@@ -368,7 +411,7 @@ class Client:
     def update_station_air_quality_indexes(
         self,
         station_id: int,
-        indexes: api.models.AirQualityIndexes
+        indexes: APIModels.AirQualityIndexes
     ):
         """
         Zapisuje lub uaktualnia wartości indeksów jakości powietrza dla stacji.
@@ -463,3 +506,77 @@ class Client:
 
         # W przeciwnym razie zwracamy wartość
         return row['value']
+
+
+    def update_station_sensors(self,station_id: int,sensors: list[APIModels.Sensor]):
+        self.update_sensor_types([s.codename for  s in sensors])
+
+        params = (
+            {
+                "id": s.id,
+                "station_id": station_id,
+                "sensor_type_codename": s.codename
+            }
+            for s in sensors
+        )
+
+        self.__cursor.executemany("""
+            INSERT OR IGNORE INTO sensor (id,station_id,sensor_type_id)
+            VALUES
+                :id AS id,
+                :station_id AS station_id,
+                (SELECT id FROM sensor_type WHERE sensor_type.codename = :sensor_type_codename)
+        """, params)
+
+        self.__conn.commit()
+
+    def fetch_last_station_sensors_update(self,station_id: int) -> datetime:
+        qry = self.__cursor.execute("""
+            SELECT last_indexes_update_at
+            FROM station_update
+            WHERE station_id = ?
+        """, (station_id,)).fetchone()
+        if qry is not None:
+            return datetime.fromtimestamp(qry["last_sensors_update_at"])
+
+        return datetime.fromtimestamp(0)
+
+    def fetch_station_sensors(self,station_id: int) -> list[views.SensorView]:
+        qry = self.__cursor.execute("SELECT sensor.id, sensor.codename FROM sensor WHERE sensor.station_id = ?",[station_id]).fetchall()
+
+        return [
+            views.SensorView(
+                id=entry['id'],
+                codename=entry['codename']
+            )
+            for entry in qry
+        ]
+
+    def fetch_station_details(self,station_id: int) -> views.StationDetailsView:
+        qry = self.__cursor.execute("""
+            SELECT station.codename,station.name,city.district,city.voivodeship,city.city,station.address
+            FROM station
+            JOIN city
+                ON station.city_id = city.id
+            WHERE station.id = ?
+        """,[station_id]).fetchone()
+
+        return views.StationDetailsView(
+            id=station_id,
+            codename=qry['codename'],
+            name=qry['name'],
+            district=qry['district'],
+            voivodeship=qry['voivodeship'],
+            city=qry['city'],
+            address=qry['address']
+        )
+
+    def update_sensor_data(self,sensor_id: int,data: list[APIModels.SensorData]):
+        self.__cursor.execute("""
+            INSERT INTO sensor_data (sensor_id,date,value)
+            VALUES
+            (?,?,?)
+        """,[(sensor_id,entry.date.isoformat(),entry.value) for entry in data])
+
+    def fetch_sensor_data(self):
+        pass

@@ -100,6 +100,7 @@ class StationIndexFetcher(QRunnable):
 
 
 class StationSelectWidget(QWidget):
+    stationSelected = Signal(int)
 
     def __init__(self,repository: Repository, *args,**kwargs):
         self.repository = repository
@@ -189,13 +190,11 @@ class StationSelectWidget(QWidget):
     @Slot(QListWidgetItem)
     def on_station_clicked(self,item: QListWidgetItem):
         station = item.data(Qt.ItemDataRole.UserRole)
-        print(f"Trying to set position: {station}")
         self.map_view.set_position(station.latitude,station.longitude)
 
     @Slot(int)
     def on_station_marker_clicked(self,station_id: int):
-        station = next(station for station in self.stations if station.id == station_id)
-        print(f"Station clicked: {station}")
+        self.stationSelected.emit(station_id)
 
 
     @Slot(int)
@@ -205,7 +204,6 @@ class StationSelectWidget(QWidget):
     @Slot(int)
     def on_request_station_index_value(self,station_id: int):
         current_index = self.aq_index_type_combo.currentText()
-        logging.info(f"Requesting index value: {station_id} : {current_index}")
 
         task = StationIndexFetcher(station_id,current_index,self.repository)
         task.signals.finished.connect(self.map_view.init_index_value)

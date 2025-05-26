@@ -25,11 +25,6 @@ class StationMeta:
     type: str
 
 @dataclass
-class Sensor:
-    id: int
-    codename: str
-
-@dataclass
 class IndexCategory:
     value: int
     name: str
@@ -45,3 +40,14 @@ class AirQualityIndexes:
     sensors: dict[str,Index]
     index_status: bool | None
     index_critical: str | None
+
+@dataclass
+class Sensor:
+    id: int
+    codename: str
+    name: str
+
+@dataclass
+class SensorData:
+    date: datetime
+    value: float

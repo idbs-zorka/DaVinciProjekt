@@ -2,7 +2,8 @@ from datetime import timedelta
 
 UPDATE_INTERVALS = {
     "station": timedelta(days=1),
-    "aq_indexes": timedelta(hours=1)
+    "aq_indexes": timedelta(hours=1),
+    "sensors": timedelta(days=1)
 }
 
 AQ_INDEX_CATEGORIES = {

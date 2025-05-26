@@ -1,3 +1,4 @@
+import datetime
 from dataclasses import dataclass
 
 @dataclass
@@ -12,6 +13,17 @@ class StationListView(StationCommonView):
     city: str
 
 @dataclass
+class AQIndexView:
+    codename: str
+    value: int
+    category: str
+
+@dataclass
+class SensorView:
+    id: int
+    codename: str
+
+@dataclass
 class StationDetailsView(StationCommonView):
     codename: str
     name: str
@@ -19,10 +31,4 @@ class StationDetailsView(StationCommonView):
     voivodeship: str
     city: str
     address: str
-
-@dataclass
-class AQIndexView:
-    codename: str
-    value: int
-    category: str
 
