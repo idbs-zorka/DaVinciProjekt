@@ -521,18 +521,19 @@ class Client:
         )
 
         self.__cursor.executemany("""
-            INSERT OR IGNORE INTO sensor (id,station_id,sensor_type_id)
-            VALUES
-                :id AS id,
-                :station_id AS station_id,
-                (SELECT id FROM sensor_type WHERE sensor_type.codename = :sensor_type_codename)
+            INSERT OR IGNORE INTO sensor (id, station_id, sensor_type_id)
+            VALUES (
+                :id,
+                :station_id,
+                (SELECT id FROM sensor_type WHERE codename = :sensor_type_codename)
+            )
         """, params)
 
         self.__conn.commit()
 
     def fetch_last_station_sensors_update(self,station_id: int) -> datetime:
         qry = self.__cursor.execute("""
-            SELECT last_indexes_update_at
+            SELECT last_sensors_update_at
             FROM station_update
             WHERE station_id = ?
         """, (station_id,)).fetchone()
@@ -542,7 +543,13 @@ class Client:
         return datetime.fromtimestamp(0)
 
     def fetch_station_sensors(self,station_id: int) -> list[views.SensorView]:
-        qry = self.__cursor.execute("SELECT sensor.id, sensor.codename FROM sensor WHERE sensor.station_id = ?",[station_id]).fetchall()
+        qry = self.__cursor.execute("""
+            SELECT sensor.id, sensor_type.codename 
+            FROM sensor
+            JOIN sensor_type
+                ON sensor_type.id = sensor.sensor_type_id
+            WHERE sensor.station_id = ?
+        """,[station_id]).fetchall()
 
         return [
             views.SensorView(
@@ -578,5 +585,5 @@ class Client:
             (?,?,?)
         """,[(sensor_id,entry.date.isoformat(),entry.value) for entry in data])
 
-    def fetch_sensor_data(self):
+    def fetch_sensor_data(self,sensor_id: int):
         pass

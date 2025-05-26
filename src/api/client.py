@@ -191,14 +191,58 @@ class Client:
         params = dict()
 
         if city is not None:
-            params.update({"miasto": city})
+            params.update({"filter[miasto]": city})
 
         if station_codename is not None:
-            params.update({"kod-stacji": station_codename})
+            params.update({"filter[kod-stacji]": station_codename})
 
         raw = self.__get_collected(
             endpoint="pjp-api/v1/rest/metadata/stations",
             target="Lista metadanych stacji pomiarowych",
+            args=params
+        )
+        return [
+            models.StationMeta(
+                codename=entry["Kod stacji"],
+                international_codename=entry["Kod międzynarodowy"],
+                launch_date=datetime.fromisoformat(entry["Data uruchomienia"]),
+                close_date=(
+                    datetime.fromisoformat(entry["Data zamknięcia"])
+                    if entry["Data zamknięcia"] is not None else None
+                ),
+                type=entry["Rodzaj stacji"]
+            )
+            for entry in raw
+        ]
+
+    def fetch_sensor_meta(
+        self,
+        measure_type: str = None,
+        station_codename: str = None
+    ) -> list[models.StationMeta]:
+        """
+        Pobiera metadane (kody międzynarodowe, daty otwarcia/zamknięcia, typ)
+        dla stacji, filtrowane opcjonalnie po mieście lub kodzie stacji.
+
+        Args:
+            city (str, opcjonalnie): Nazwa miasta do filtrowania.
+            station_codename (str, opcjonalnie): Kod stacji do filtrowania.
+
+        Returns:
+            list[models.StationMeta]: Lista obiektów StationMeta.
+        """
+
+        params = dict()
+
+        if measure_type is not None:
+            params.update({"filter[typ-pomiaru]": measure_type})
+
+        if station_codename is not None:
+            params.update({"filter[kod-stacji]": station_codename})
+
+        raw = self.__get_collected(
+            endpoint="pjp-api/v1/rest/metadata/sensors",
+            target="Lista metadanych stanowisk pomiarowych",
             args=params
         )
         return [
@@ -270,10 +314,10 @@ class Client:
 
         return [
             models.Sensor(
-                id=raw['Identyfikator stanowiska'],
-                codename=raw['Wskaźnik - kod'],
-                name=raw['Wskaźnik']
-            )
+                id=entry['Identyfikator stanowiska'],
+                codename=entry['Wskaźnik - kod'],
+                name=entry['Wskaźnik']
+            ) for entry in raw
         ]
 
     def fetch_sensor_data(self,sensor_id: int) -> list[models.SensorData]:
@@ -281,7 +325,7 @@ class Client:
 
         def collect_data(data):
             result.extend(
-                SensorDataView(
+                models.SensorData(
                     date=datetime.fromisoformat(entry['Data']),
                     value=entry['Wartość']
                 ) for entry in data

@@ -25,6 +25,12 @@ class StationMeta:
     type: str
 
 @dataclass
+class SensorMeta:
+    codename: str
+    avg_time: str
+    measure_type: str
+
+@dataclass
 class IndexCategory:
     value: int
     name: str
