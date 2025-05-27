@@ -15,7 +15,6 @@ def main():
 
     app.run()
 
-
 if __name__ == "__main__":
     logging.basicConfig(level='DEBUG')
     main()

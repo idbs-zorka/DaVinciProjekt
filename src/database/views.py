@@ -32,3 +32,7 @@ class StationDetailsView(StationCommonView):
     city: str
     address: str
 
+@dataclass
+class SensorValueView:
+    date: datetime
+    value: float

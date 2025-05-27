@@ -1,8 +1,10 @@
+from unittest.mock import sentinel
+
 from src.api.client import Client as APIClient
 from src.database.client import Client as DatabaseClient
 import src.database.views as views
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.config import UPDATE_INTERVALS
 
@@ -112,3 +114,47 @@ class Repository:
             self.update_station_sensors(station_id)
 
         return self._database_client.fetch_station_sensors(station_id)
+
+
+    def update_sensor_data(self,sensor_id: int,date_from: datetime,date_to: datetime):
+        days = (datetime.now() - date_from).days
+
+        if days >= 3:
+            data = self._api_client.fetch_sensor_archival_data(
+                sensor_id=sensor_id,
+                date_from=date_from,
+                date_to=date_to
+            )
+            self._database_client.update_sensor_data(sensor_id, data)
+
+        data = self._api_client.fetch_sensor_data(sensor_id)
+        self._database_client.update_sensor_data(sensor_id,data)
+
+    def fetch_sensor_data(
+            self,
+            sensor_id: int,
+            date_from: datetime,
+            date_to: datetime = None
+    ) -> list[views.SensorValueView]:
+        # jeśli nie podano date_to, użyj teraz()
+        if date_to is None:
+            date_to = datetime.now()
+
+        # pobierz zakres dostępny w bazie
+        latest = self._database_client.fetch_latest_sensor_record_date(sensor_id)
+        oldest = self._database_client.fetch_oldest_sensor_record_date(sensor_id)
+
+        # jeśli brak w ogóle rekordów, pobierz cały przedział
+        if latest is None or oldest is None:
+            self.update_sensor_data(sensor_id, date_from, date_to)
+        else:
+            # jeśli date_to jest co najmniej o godzinę później niż latest
+            if date_to >= latest + timedelta(hours=1):
+                self.update_sensor_data(sensor_id, latest, date_to)
+
+            # jeśli date_from jest co najmniej o godzinę wcześniej niż oldest
+            if date_from <= oldest - timedelta(hours=1):
+                self.update_sensor_data(sensor_id, date_from, oldest)
+
+        # w końcu zawsze zwracamy dane z bazy w zadanym przedziale
+        return self._database_client.fetch_sensor_data(sensor_id, date_from, date_to)

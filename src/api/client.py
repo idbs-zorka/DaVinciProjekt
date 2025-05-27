@@ -1,5 +1,6 @@
+import typing
 from datetime import datetime
-from typing import Callable, Any
+from typing import Callable, Any, Literal
 
 import requests
 
@@ -9,8 +10,8 @@ import src.api.models as models
 
 class Client:
     """
-    Klient HTTP dla GIOŚ-owego API (https://api.gios.gov.pl),
-    obsługujący paginację, błędy oraz mapowanie odpowiedzi na modele.
+    Klient HTTP dla API GIOŚ (https://api.gios.gov.pl),
+    obsługujący paginację, obsługę błędów oraz mapowanie odpowiedzi na modele.
     """
 
     __BASE = "https://api.gios.gov.pl"
@@ -20,25 +21,25 @@ class Client:
         endpoint: str,
         page: int = 0,
         size: int = 100,
-        args: dict[str, Any] = None
+        args: dict[str, Any] = None,
     ) -> str:
         """
-        Buduje pełny URL z bazowego adresu, ścieżki, parametrów paginacji i opcjonalnych argumentów.
+        Buduje pełny URL z bazowego adresu, ścieżki oraz parametrów paginacji i dodatkowych argumentów.
 
         Args:
             endpoint (str): Ścieżka API (np. "pjp-api/v1/rest/station/findAll").
-            page (int, opcjonalnie): Numer strony (0–based). Domyślnie 0.
-            size (int, opcjonalnie): Maksymalna liczba rekordów na stronę. Domyślnie 100.
-            args (dict[str, Any], opcjonalnie): Dodatkowe pary klucz=wartość do doklejenia w query string.
+            page (int, opcjonalnie): Numer strony (0-based). Domyślnie 0.
+            size (int, opcjonalnie): Liczba rekordów na stronę. Domyślnie 100.
+            args (dict[str, Any], opcjonalnie): Dodatkowe parametry query string.
 
         Returns:
-            str: Pełny adres URL gotowy do wywołania przez `requests.get()`.
+            str: Pełny adres URL gotowy do wywołania przez requests.get().
         """
         if args is None:
             args = {}
         url = f"{self.__BASE}/{endpoint}?page={page}&size={size}"
-        for arg, val in args.items():
-            url += f"&{arg}={val}"
+        for key, value in args.items():
+            url += f"&{key}={value}"
         return url
 
     def __get(
@@ -46,115 +47,118 @@ class Client:
         endpoint: str,
         page: int = 0,
         size: int = 100,
-        args: dict[str, Any] = None
+        args: dict[str, Any] = None,
     ) -> Any:
         """
-        Wykonuje pojedyncze żądanie GET, sprawdza status i zwraca zdeserializowane JSON.
+        Wykonuje żądanie GET, sprawdza status odpowiedzi i zwraca dane z JSON.
 
         Args:
             endpoint (str): Ścieżka API.
             page (int, opcjonalnie): Numer strony.
             size (int, opcjonalnie): Rozmiar strony.
-            args (dict[str, Any], opcjonalnie): Dodatkowe argumenty query.
+            args (dict[str, Any], opcjonalnie): Dodatkowe parametry query string.
 
         Returns:
-            Any: Słownik lub lista wyników z odpowiedzi JSON.
+            Any: Zdeserializowany obiekt JSON (słownik lub lista).
 
         Raises:
-            exceptions.APIError: W przypadku błędu HTTP, z mapowaniem pola
-                `error_code`, `error_reason`, `error_result`, `error_solution`.
+            exceptions.APIError: W przypadku błędu HTTP z mapowaniem pól error_code, error_reason,
+                error_result oraz error_solution.
         """
         try:
             url = self.make_url(endpoint, page, size, args)
-            response = requests.get(url,timeout=None)
-            response.raise_for_status() # Sprawdzanie bledow po stronie serwera
+            response = requests.get(url, timeout=None)
+            response.raise_for_status()
             return response.json()
-        except requests.exceptions.HTTPError as e:
-            payload = e.response.json()
+        except requests.exceptions.HTTPError as http_err:
+            payload = http_err.response.json()
             raise exceptions.APIError(
-                code=payload["error_code"],
-                reason=payload["error_reason"],
-                result=payload["error_result"],
-                solution=payload["error_solution"]
+                code=payload.get("error_code"),
+                reason=payload.get("error_reason"),
+                result=payload.get("error_result"),
+                solution=payload.get("error_solution"),
             )
 
     def __get_collected(
         self,
         endpoint: str,
-        target: str, # Glowna wartosc zapytania json
-        args: dict[str, Any] = None
-    ) -> Any:
+        target: str,
+        size: int = 100,
+        args: dict[str, Any] = None,
+    ) -> typing.Union[list, dict]:
         """
-        Pobiera wszystkie strony wyników (paginacja) i scala dane z pola `target`.
+        Pobiera wszystkie strony wyników (paginacja) i scala dane z klucza target.
 
         Args:
             endpoint (str): Ścieżka API.
-            target (str): Klucz w JSON, pod którym znajdują się dane (lista lub dict).
-            args (dict[str, Any], opcjonalnie): Dodatkowe argumenty query.
+            target (str): Klucz w JSON, pod którym znajdują się dane (lista lub słownik).
+            args (dict[str, Any], opcjonalnie): Dodatkowe parametry query string.
 
         Returns:
             list|dict: Scalona lista lub słownik wyników.
 
         Raises:
-            TypeError: Jeśli zwrócony fragment JSON nie jest ani listą, ani słownikiem.
+            TypeError: Gdy zwrócony fragment JSON nie jest listą ani słownikiem.
         """
         response = self.__get(endpoint, args=args)
-        total_pages = int(response['totalPages']) # Odczyt ilosci stron zapytan. Zmienna na koncu pierwszej strony zapytania
-        fragment = response[target] # Wartosc glownego elementu zapytania
+        total_pages = int(response.get("totalPages", 1))
+        fragment = response.get(target)
 
         if isinstance(fragment, list):
-            result = list(fragment)
+            result: typing.Any = list(fragment)
         elif isinstance(fragment, dict):
-            result = dict(fragment)
+            result: typing.Any = dict(fragment)
         else:
-            raise TypeError(f"Unexpected target type: {type(fragment).__name__}")
+            raise TypeError(f"Nieoczekiwany typ danych: {type(fragment).__name__}")
 
         for page in range(1, total_pages):
             response = self.__get(endpoint, page=page, args=args)
-            fragment = response[target]
+            fragment = response.get(target)
             if isinstance(fragment, list):
                 result.extend(fragment)
             elif isinstance(fragment, dict):
                 result.update(fragment)
             else:
-                raise TypeError(f"Unexpected target type: {type(fragment).__name__}")
+                raise TypeError(f"Nieoczekiwany typ danych: {type(fragment).__name__}")
 
         return result
-    # Opcjonalna optymalizacja
+
     def __get_each(
         self,
         endpoint: str,
         target: str,
         callback: Callable[[Any], None],
-        args: dict[str, Any] = None
+        size: int = 500,
+        args: dict[str, Any] = None,
     ) -> None:
         """
-        Iteruje po stronach wyników i wywołuje `callback` dla każdego fragmentu `target`.
+        Iteruje po wszystkich stronach wyników i wywołuje funkcję callback dla każdego fragmentu target.
 
         Args:
             endpoint (str): Ścieżka API.
-            target (str): Klucz JSON, z którego pobiera fragment.
-            callback (Callable[[Any], None]): Funkcja wywoływana z fragmentem danych.
-            args (dict[str, Any], opcjonalnie): Dodatkowe argumenty query.
+            target (str): Klucz JSON, z którego pobierane są fragmenty danych.
+            callback (Callable[[Any], None]): Funkcja przetwarzająca fragment danych.
+            size (int, opcjonalnie): Liczba rekordów na stronę. Domyślnie 500.
+            args (dict[str, Any], opcjonalnie): Dodatkowe parametry query string.
         """
         response = self.__get(endpoint, args=args)
-        total_pages = int(response['totalPages'])
+        total_pages = int(response.get("totalPages", 1))
 
         for page in range(total_pages):
             if page > 0:
                 response = self.__get(endpoint, page=page, args=args)
-            callback(response[target])
+            callback(response.get(target))
 
     def fetch_stations(self) -> list[models.Station]:
         """
-        Pobiera pełną listę stacji pomiarowych ze scalam paginację.
+        Pobiera pełną listę stacji pomiarowych.
 
         Returns:
-            list[models.Station]: Lista obiektów Station z danymi o lokalizacji i nazewnictwie.
+            list[models.Station]: Lista obiektów Station z danymi lokalizacyjnymi i nazewnictwem.
         """
         raw = self.__get_collected(
             endpoint="pjp-api/v1/rest/station/findAll",
-            target="Lista stacji pomiarowych"
+            target="Lista stacji pomiarowych",
         )
         return [
             models.Station(
@@ -166,7 +170,7 @@ class Client:
                 city=entry["Nazwa miasta"],
                 address=entry["Ulica"],
                 latitude=entry["WGS84 φ N"],
-                longitude=entry["WGS84 λ E"]
+                longitude=entry["WGS84 λ E"],
             )
             for entry in raw
         ]
@@ -174,11 +178,10 @@ class Client:
     def fetch_station_meta(
         self,
         city: str = None,
-        station_codename: str = None
+        station_codename: str = None,
     ) -> list[models.StationMeta]:
         """
-        Pobiera metadane (kody międzynarodowe, daty otwarcia/zamknięcia, typ)
-        dla stacji, filtrowane opcjonalnie po mieście lub kodzie stacji.
+        Pobiera metadane stacji pomiarowych z opcjonalnym filtrowaniem.
 
         Args:
             city (str, opcjonalnie): Nazwa miasta do filtrowania.
@@ -187,19 +190,16 @@ class Client:
         Returns:
             list[models.StationMeta]: Lista obiektów StationMeta.
         """
-
-        params = dict()
-
-        if city is not None:
-            params.update({"filter[miasto]": city})
-
-        if station_codename is not None:
-            params.update({"filter[kod-stacji]": station_codename})
+        params: dict[str, Any] = {}
+        if city:
+            params["filter[miasto]"] = city
+        if station_codename:
+            params["filter[kod-stacji]"] = station_codename
 
         raw = self.__get_collected(
             endpoint="pjp-api/v1/rest/metadata/stations",
             target="Lista metadanych stacji pomiarowych",
-            args=params
+            args=params,
         )
         return [
             models.StationMeta(
@@ -208,9 +208,10 @@ class Client:
                 launch_date=datetime.fromisoformat(entry["Data uruchomienia"]),
                 close_date=(
                     datetime.fromisoformat(entry["Data zamknięcia"])
-                    if entry["Data zamknięcia"] is not None else None
+                    if entry.get("Data zamknięcia")
+                    else None
                 ),
-                type=entry["Rodzaj stacji"]
+                type=entry["Rodzaj stacji"],
             )
             for entry in raw
         ]
@@ -218,32 +219,28 @@ class Client:
     def fetch_sensor_meta(
         self,
         measure_type: str = None,
-        station_codename: str = None
+        station_codename: str = None,
     ) -> list[models.StationMeta]:
         """
-        Pobiera metadane (kody międzynarodowe, daty otwarcia/zamknięcia, typ)
-        dla stacji, filtrowane opcjonalnie po mieście lub kodzie stacji.
+        Pobiera metadane sensorów, filtrowane po rodzaju pomiaru lub kodzie stacji.
 
         Args:
-            city (str, opcjonalnie): Nazwa miasta do filtrowania.
+            measure_type (str, opcjonalnie): Kod typu pomiaru do filtrowania.
             station_codename (str, opcjonalnie): Kod stacji do filtrowania.
 
         Returns:
-            list[models.StationMeta]: Lista obiektów StationMeta.
+            list[models.StationMeta]: Lista obiektów StationMeta dla sensorów.
         """
-
-        params = dict()
-
-        if measure_type is not None:
-            params.update({"filter[typ-pomiaru]": measure_type})
-
-        if station_codename is not None:
-            params.update({"filter[kod-stacji]": station_codename})
+        params: dict[str, Any] = {}
+        if measure_type:
+            params["filter[typ-pomiaru]"] = measure_type
+        if station_codename:
+            params["filter[kod-stacji]"] = station_codename
 
         raw = self.__get_collected(
             endpoint="pjp-api/v1/rest/metadata/sensors",
             target="Lista metadanych stanowisk pomiarowych",
-            args=params
+            args=params,
         )
         return [
             models.StationMeta(
@@ -252,89 +249,153 @@ class Client:
                 launch_date=datetime.fromisoformat(entry["Data uruchomienia"]),
                 close_date=(
                     datetime.fromisoformat(entry["Data zamknięcia"])
-                    if entry["Data zamknięcia"] is not None else None
+                    if entry.get("Data zamknięcia")
+                    else None
                 ),
-                type=entry["Rodzaj stacji"]
+                type=entry["Rodzaj stacji"],
             )
             for entry in raw
         ]
 
     def fetch_air_quality_indexes(
         self,
-        station_id: int
+        station_id: int,
     ) -> models.AirQualityIndexes:
         """
-        Pobiera aktualne indeksy jakości powietrza dla stacji,
-        zarówno ogólny, jak i dla poszczególnych sensorów.
+        Pobiera aktualne indeksy jakości powietrza dla danej stacji.
 
         Args:
             station_id (int): Identyfikator stacji pomiarowej.
 
         Returns:
-            models.AirQualityIndexes | None: Obiekt z wartościami indeksów
-            lub None, jeśli dla stacji nie ma aktualnych danych.
+            models.AirQualityIndexes: Obiekt zawierający indeks ogólny i dla poszczególnych wskaźników.
 
         Raises:
-            ValueError: Jeśli odpowiedź API ma niespodziewany format.
+            ValueError: Gdy odpowiedź API ma niespodziewany format.
         """
         raw = self.__get_collected(
             endpoint=f"pjp-api/v1/rest/aqindex/getIndex/{station_id}",
-            target="AqIndex"
+            target="AqIndex",
         )
 
-        # Jezeli nie ma podanego czasu to zwraca None uproszczenia czytelnosci
-        get_date = lambda key: datetime.fromisoformat(raw[key]) if (raw[key] is not None) else None
+        def parse_date(key: str) -> typing.Optional[datetime]:
+            value = raw.get(key)
+            return datetime.fromisoformat(value) if value else None
 
-        # Dla wartosci ogolnej
         overall = models.Index(
-            date=get_date("Data wykonania obliczeń indeksu"),
-            value=raw["Wartość indeksu"]
+            date=parse_date("Data wykonania obliczeń indeksu"),
+            value=raw.get("Wartość indeksu"),
         )
-        # Dla poszczegolnych wartosci
-        sensors: dict[str, models.Index] = {
-            pollutant: models.Index(
-                date=get_date(f"Data wykonania obliczeń indeksu dla wskaźnika {pollutant}"),
-                value=raw[f"Wartość indeksu dla wskaźnika {pollutant}"]
+        sensors: dict[str, models.Index] = {}
+        for pollutant in ["NO2", "O3", "PM10", "PM2.5", "SO2"]:
+            sensors[pollutant] = models.Index(
+                date=parse_date(f"Data wykonania obliczeń indeksu dla wskaźnika {pollutant}"),
+                value=raw.get(f"Wartość indeksu dla wskaźnika {pollutant}"),
             )
-            for pollutant in ['NO2', 'O3', 'PM10', 'PM2.5', 'SO2']
-        }
 
         return models.AirQualityIndexes(
             overall=overall,
             sensors=sensors,
-            index_status=raw["Status indeksu ogólnego dla stacji pomiarowej"],
-            index_critical=raw["Kod zanieczyszczenia krytycznego"]
+            index_status=raw.get("Status indeksu ogólnego dla stacji pomiarowej"),
+            index_critical=raw.get("Kod zanieczyszczenia krytycznego"),
         )
 
-    def fetch_station_sensors(self,station_id: int) -> list[models.Sensor]:
+    def fetch_station_sensors(self, station_id: int) -> list[models.Sensor]:
+        """
+        Pobiera listę sensorów dostępnych na danej stacji.
+
+        Args:
+            station_id (int): Identyfikator stacji pomiarowej.
+
+        Returns:
+            list[models.Sensor]: Lista obiektów Sensor z identyfikatorem i nazwą wskaźnika.
+        """
         raw = self.__get_collected(
             endpoint=f"pjp-api/v1/rest/station/sensors/{station_id}",
-            target="Lista stanowisk pomiarowych dla podanej stacji"
+            target="Lista stanowisk pomiarowych dla podanej stacji",
         )
-
         return [
             models.Sensor(
-                id=entry['Identyfikator stanowiska'],
-                codename=entry['Wskaźnik - kod'],
-                name=entry['Wskaźnik']
-            ) for entry in raw
+                id=entry["Identyfikator stanowiska"],
+                codename=entry["Wskaźnik - kod"],
+                name=entry["Wskaźnik"],
+            )
+            for entry in raw
         ]
 
-    def fetch_sensor_data(self,sensor_id: int) -> list[models.SensorData]:
+    def fetch_sensor_data(self, sensor_id: int) -> list[models.SensorData]:
+        """
+        Pobiera bieżące dane pomiarowe dla czujnika, iterując po wszystkich stronach.
+
+        Args:
+            sensor_id (int): Identyfikator czujnika.
+
+        Returns:
+            list[models.SensorData]: Lista obiektów SensorData z datą i wartością pomiaru.
+        """
         result: list[models.SensorData] = []
 
-        def collect_data(data):
-            result.extend(
-                models.SensorData(
-                    date=datetime.fromisoformat(entry['Data']),
-                    value=entry['Wartość']
-                ) for entry in data
-            )
+        def collect(data: list[dict[str, Any]]) -> None:
+            for entry in data:
+                value = entry.get("Wartość")
+                if value is not None:
+                    result.append(
+                        models.SensorData(
+                            date=datetime.fromisoformat(entry["Data"]),
+                            value=value,
+                        )
+                    )
 
         self.__get_each(
             endpoint=f"pjp-api/v1/rest/data/getData/{sensor_id}",
-            target=f"Lista danych pomiarowych",
-            callback=collect_data
+            target="Lista danych pomiarowych",
+            callback=collect,
         )
+        return result
 
+    def fetch_sensor_archival_data(
+        self,
+        sensor_id: int,
+        date_from: datetime = None,
+        date_to: datetime = None,
+        days: int = None,
+    ) -> list[models.SensorData]:
+        """
+        Pobiera archiwalne dane pomiarowe dla czujnika z opcjonalnym zakresem czasowym.
+
+        Args:
+            sensor_id (int): Identyfikator czujnika.
+            date_from (datetime, opcjonalnie): Data początkowa (inclusive).
+            date_to (datetime, opcjonalnie): Data końcowa (inclusive).
+            days (int, opcjonalnie): Liczba dni do pobrania przed dniem dzisiejszym.
+
+        Returns:
+            list[models.SensorData]: Lista obiektów SensorData z datą i wartością.
+        """
+        result: list[models.SensorData] = []
+        params: dict[str, Any] = {}
+        date_format = "%Y-%m-%d %H:%M"
+
+        if date_from:
+            params["dateFrom"] = date_from.strftime(date_format)
+        if date_to:
+            params["dateTo"] = date_to.strftime(date_format)
+        if days:
+            params["dayNumber"] = days
+
+        def collect(data: list[dict[str, Any]]) -> None:
+            for entry in data:
+                result.append(
+                    models.SensorData(
+                        date=datetime.fromisoformat(entry["Data"]),
+                        value=entry.get("Wartość"),
+                    )
+                )
+
+        self.__get_each(
+            endpoint=f"pjp-api/v1/rest/archivalData/getDataBySensor/{sensor_id}",
+            target="Lista archiwalnych wyników pomiarów",
+            callback=collect,
+            args=params,
+        )
         return result
