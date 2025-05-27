@@ -1,9 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 
-# MAYBE TODO: add city model
 @dataclass
 class Station:
     id: int

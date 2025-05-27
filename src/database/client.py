@@ -392,8 +392,6 @@ class Client:
             address=qry['address']
         )
 
-
-
     def update_sensor_types(self, types: list[str]):
         """
         Dodaje nowe typy sensorów do słownika `sensor_type`.
@@ -578,12 +576,50 @@ class Client:
             address=qry['address']
         )
 
-    def update_sensor_data(self,sensor_id: int,data: list[APIModels.SensorData]):
-        self.__cursor.execute("""
+    def update_sensor_data(self, sensor_id: int, data: list[APIModels.SensorData]):
+        self.__cursor.executemany("""
             INSERT INTO sensor_data (sensor_id,date,value)
             VALUES
             (?,?,?)
-        """,[(sensor_id,entry.date.isoformat(),entry.value) for entry in data])
+            ON CONFLICT(sensor_id,date) DO UPDATE
+                SET value=EXCLUDED.value
+        """, [(sensor_id,entry.date.isoformat(),entry.value) for entry in data])
 
-    def fetch_sensor_data(self,sensor_id: int):
-        pass
+    def fetch_latest_sensor_record_date(self,sensor_id: int) -> datetime | None:
+        qry = self.__cursor.execute("""
+            SELECT MAX(date) AS date FROM sensor_data
+            WHERE sensor_id = ?
+        """,[sensor_id]).fetchone()
+
+        if qry['date'] is None:
+            return None
+
+        return datetime.fromisoformat(qry['date'])
+
+    def fetch_oldest_sensor_record_date(self,sensor_id: int) -> datetime | None:
+        qry = self.__cursor.execute("""
+            SELECT MIN(date) AS date FROM sensor_data
+            WHERE sensor_id = ?
+        """,[sensor_id]).fetchone()
+
+        if qry['date'] is None:
+            return None
+
+        return datetime.fromisoformat(qry['date'])
+
+    def fetch_sensor_data(self,sensor_id: int, date_from: datetime, date_to: datetime = datetime.now()) -> list[views.SensorValueView]:
+        qry = self.__cursor.execute("""
+            SELECT date,value FROM sensor_data
+            WHERE sensor_id = :sensor_id AND date >= :date_from AND date <= :date_to
+        """,{
+            "sensor_id": sensor_id,
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat()
+        }).fetchall()
+
+        return [
+            views.SensorValueView(
+                date=datetime.fromisoformat(entry['date']),
+                value=entry['value']
+            ) for entry in qry
+        ]
