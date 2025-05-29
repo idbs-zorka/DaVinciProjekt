@@ -1,13 +1,14 @@
 from datetime import datetime
 
-from PySide6.QtCharts import QChart, QLineSeries, QChartView, QValueAxis, QDateTimeAxis
-from PySide6.QtCore import QDateTime, QMargins
+from PySide6.QtCharts import QChart, QLineSeries, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries
+from PySide6.QtCore import QDateTime, QMargins, QPoint, Slot
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLayout, QComboBox, QDateTimeEdit
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLayout, QComboBox, QDateTimeEdit, \
+    QVBoxLayout, QPushButton
 
 from src.database.views import StationDetailsView, SensorView
 from src.repository import Repository
-
+from qt import datetime_to_qt,qt_to_datetime
 
 class StationInfoWidget(QWidget):
     def __init__(self,station_details: StationDetailsView,parent : QWidget = None):
@@ -37,103 +38,64 @@ class StationDataWidget(QWidget):
         self.station_id = station_id
         self.sensors = self.repository.fetch_station_sensors(self.station_id)
 
-        # Left
+        # top
 
-        # Sensor selection
-        self.sensor_combo = QComboBox(self,editable=True)
-        self.sensor_combo.lineEdit().setReadOnly(True)
-        self.sensor_combo.lineEdit().setPlaceholderText("Wybierz sensor")
-        for sensor in [*self.sensors]:
-            self.sensor_combo.addItem(sensor.codename,userData=sensor)
+        sensor_combo_label = QLabel("Sensor: ", self)
+        sensor_combo = QComboBox(self,editable=True)
+        sensor_combo.lineEdit().setReadOnly(True)
+        sensor_combo.lineEdit().setPlaceholderText("Wybierz sensor")
 
-        self.sensor_combo.setCurrentIndex(-1)
+        for sensor in self.sensors:
+            sensor_combo.addItem(sensor.codename,userData=sensor)
 
-        self.sensor_combo.currentIndexChanged.connect(lambda x: self.on_sensor_changed(self.sensor_combo.itemData(x)))
+        sensor_combo.setCurrentIndex(-1)
 
-        # Date range selection
+        now_dt = QDateTime.currentDateTime()
+        from_dt = now_dt.addDays(-3)
 
-        current_datetime = QDateTime.currentDateTime()
-        last_datetime = current_datetime.addDays(-365)
+        range_from_label = QLabel("Od: ", self)
+        date_from_edit = QDateTimeEdit(self)
+        date_from_edit.setDateTime(from_dt)
+        date_from_edit.setMinimumDateTime(now_dt.addDays(-365))
 
-        self.date_from_edit = QDateTimeEdit(self)
-        self.date_from_edit.setDateTime(current_datetime.addDays(-3))
-        self.date_from_edit.setMinimumDateTime(last_datetime)
+        date_from_edit.setCalendarPopup(True)
 
-        self.date_to_edit = QDateTimeEdit(self)
-        self.date_to_edit.setDateTime(QDateTime.currentDateTime())
-        self.date_to_edit.setMaximumDateTime(QDateTime.currentDateTime())
+        range_to_label = QLabel("Od: ", self)
+        date_to_edit = QDateTimeEdit(self)
+        date_to_edit.setCalendarPopup(True)
 
-        filter_layout = QFormLayout()
-        filter_layout.addRow("Typ sensora",self.sensor_combo)
-        filter_layout.addRow("Od", self.date_from_edit)
-        filter_layout.addRow("Do", self.date_to_edit)
+        display_btn = QPushButton("Wyświetl",self)
+        display_btn.clicked.connect(self.on_display_btn)
 
-        # right
+        sensor_select_layout = QHBoxLayout()
+        sensor_select_layout.addWidget(sensor_combo_label)
+        sensor_select_layout.addWidget(sensor_combo)
+        sensor_select_layout.addWidget(range_from_label)
+        sensor_select_layout.addWidget(date_from_edit,stretch=1)
+        sensor_select_layout.addWidget(range_to_label)
+        sensor_select_layout.addWidget(date_to_edit,stretch=1)
+        sensor_select_layout.addWidget(display_btn,stretch=1)
 
-        self.chart_widget = QChartView(self)
+
+        # Chart
+
         self.chart = QChart()
-        self.chart.setBackgroundBrush(QColor.fromRgba(0x00000000))
-        self.chart.setMargins(QMargins(0,0,0,0))
-        self.chart_widget.setChart(self.chart)
+        self.series = QSplineSeries()
+        self.series.setName("Ayy")
+        self.series.append(1,1)
+        self.series.append(2,2)
+        self.series.append(3,1)
+        self.chart.addSeries(self.series)
 
-        self.layout = QHBoxLayout(self)
-        self.layout.addLayout(filter_layout)
-        self.layout.addWidget(self.chart_widget)
+        self.chart_view = QChartView(self.chart)
 
-    def load_chart_data(self):
-        # Jeśli nie wybrano czujnika, nic nie rób
-        if self.sensor_combo.currentIndex() == -1:
-            return
+        self.layout = QVBoxLayout(self)
+        self.layout.addLayout(sensor_select_layout)
+        self.layout.addWidget(self.chart_view,stretch=1)
 
-        # Pobierz wybrany sensor i zakres czasowy (w milisekundach od epoki)
-        sensor: SensorView = self.sensor_combo.currentData()
-        date_from_ms = self.date_from_edit.dateTime().toMSecsSinceEpoch()
-        date_to_ms = self.date_to_edit.dateTime().toMSecsSinceEpoch()
-
-        # Fetch danych z repozytorium (zakładam, że entry.date to datetime)
-        data = self.repository.fetch_sensor_data(
-            sensor.id,
-            datetime.fromtimestamp(date_from_ms / 1000.0),
-            datetime.fromtimestamp(date_to_ms / 1000.0)
-        )
-
-        # Czyścimy wykres i poprzednie serie
-        self.chart.removeAllSeries()
-
-        # Tworzymy nową serię i wypełniamy punktami
-        series = QLineSeries()
-        for entry in data:
-            # Konwertujemy datetime na milisekundy od epoki, zgodnie z QDateTimeAxis
-            ms = int(entry.date.timestamp() * 1000)
-            series.append(ms, entry.value)
-
-        # Dodajemy serię do wykresu
-        self.chart.addSeries(series)
-
-        # Ustawiamy oś czasu (X) i oś wartości (Y)
-        axis_x = QDateTimeAxis()
-        axis_x.setFormat("yyyy-MM-dd HH:mm")
-        axis_x.setTitleText("Czas")
-        axis_x.setTickCount(6)
-        axis_x.setMin(QDateTime.fromMSecsSinceEpoch(date_from_ms))
-        axis_x.setMax(QDateTime.fromMSecsSinceEpoch(date_to_ms))
-
-        axis_y = QValueAxis()
-        axis_y.setLabelFormat("%.2f")
-        axis_y.setTitleText("Wartość")
-        # Automatyczne dopasowanie zakresu Y do danych
-        values = [entry.value for entry in data]
-        if values:
-            axis_y.setMin(min(values))
-            axis_y.setMax(max(values))
-
-        # Przypisujemy osie do serii
-        self.chart.setAxisX(axis_x, series)
-        self.chart.setAxisY(axis_y, series)
-
-    def on_sensor_changed(self,sensor: SensorView):
-        self.load_chart_data()
-
+    @Slot
+    def on_display_btn(self):
+        pass
 
 class StationDetailsWidget(QTabWidget):
 
