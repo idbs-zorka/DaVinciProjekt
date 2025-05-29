@@ -2,6 +2,7 @@ import typing
 from datetime import datetime
 from typing import Callable, Any, Literal
 
+import logging
 import requests
 
 import src.api.exceptions as exceptions
@@ -67,10 +68,13 @@ class Client:
         """
         try:
             url = self.make_url(endpoint, page, size, args)
+            logging.info(f"API Request: {url}")
             response = requests.get(url, timeout=None)
             response.raise_for_status()
+            logging.info(f"API Request finished!")
             return response.json()
         except requests.exceptions.HTTPError as http_err:
+            logging.error(f"API Request error!")
             payload = http_err.response.json()
             raise exceptions.APIError(
                 code=payload.get("error_code"),
@@ -100,7 +104,7 @@ class Client:
         Raises:
             TypeError: Gdy zwrócony fragment JSON nie jest listą ani słownikiem.
         """
-        response = self.__get(endpoint, args=args)
+        response = self.__get(endpoint, size=size, args=args)
         total_pages = int(response.get("totalPages", 1))
         fragment = response.get(target)
 
@@ -128,7 +132,7 @@ class Client:
         endpoint: str,
         target: str,
         callback: Callable[[Any], None],
-        size: int = 500,
+        size: int = 500, # Maksymalna wielkość API
         args: dict[str, Any] = None,
     ) -> None:
         """
@@ -141,7 +145,7 @@ class Client:
             size (int, opcjonalnie): Liczba rekordów na stronę. Domyślnie 500.
             args (dict[str, Any], opcjonalnie): Dodatkowe parametry query string.
         """
-        response = self.__get(endpoint, args=args)
+        response = self.__get(endpoint, size=size, args=args)
         total_pages = int(response.get("totalPages", 1))
 
         for page in range(total_pages):

@@ -149,7 +149,7 @@ class Repository:
             self.update_sensor_data(sensor_id, date_from, date_to)
         else:
             # jeśli date_to jest co najmniej o godzinę później niż latest
-            if date_to >= latest + timedelta(hours=1):
+            if date_to.replace(minute=0,second=0,microsecond=0) != latest.replace(minute=0,second=0,microsecond=0):
                 self.update_sensor_data(sensor_id, latest, date_to)
 
             # jeśli date_from jest co najmniej o godzinę wcześniej niż oldest
