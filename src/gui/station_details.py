@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLay
 
 from src.database.views import StationDetailsView, SensorView
 from src.repository import Repository
-from qt import datetime_to_qt,qt_to_datetime
+from src.gui.qt import datetime_to_qt,qt_to_datetime
 
 class StationInfoWidget(QWidget):
     def __init__(self,station_details: StationDetailsView,parent : QWidget = None):
@@ -93,7 +93,7 @@ class StationDataWidget(QWidget):
         self.layout.addLayout(sensor_select_layout)
         self.layout.addWidget(self.chart_view,stretch=1)
 
-    @Slot
+    @Slot(int)
     def on_display_btn(self):
         pass
 
