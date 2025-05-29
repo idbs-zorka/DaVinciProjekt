@@ -105,9 +105,9 @@ class Client:
         fragment = response.get(target)
 
         if isinstance(fragment, list):
-            result: typing.Any = list(fragment)
+            result = list(fragment)
         elif isinstance(fragment, dict):
-            result: typing.Any = dict(fragment)
+            result = dict(fragment)
         else:
             raise TypeError(f"Nieoczekiwany typ danych: {type(fragment).__name__}")
 
