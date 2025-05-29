@@ -1,12 +1,10 @@
-from unittest.mock import sentinel
-
-from src.api.client import Client as APIClient
-from src.database.client import Client as DatabaseClient
-import src.database.views as views
-
 from datetime import datetime, timedelta
 
+import src.database.views as views
+from src.api.client import Client as APIClient
 from src.config import UPDATE_INTERVALS
+from src.database.client import Client as DatabaseClient
+
 
 class Repository:
     """

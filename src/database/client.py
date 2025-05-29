@@ -53,7 +53,7 @@ class Client:
             )
         """)
 
-        # Wstawienie brakujących identyfikatorów
+        # Wstawienie brakującego identyfikatora lub przyszłościowych identyfikatorów
         self.__cursor.executemany("""
             INSERT OR IGNORE INTO global_update (id)
                 VALUES (?)
