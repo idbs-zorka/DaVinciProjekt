@@ -1,14 +1,17 @@
 from datetime import datetime
 
-from PySide6.QtCharts import QChart, QLineSeries, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries
-from PySide6.QtCore import QDateTime, QMargins, QPoint, Slot, QSize
-from PySide6.QtGui import QColor, Qt, QPainter
+import numpy as np
+from PySide6.QtCharts import QChart, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries
+from PySide6.QtCore import QDateTime, Slot, QSize
+from PySide6.QtGui import Qt, QPainter, QFont, QPixmap
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLayout, QComboBox, QDateTimeEdit, \
-    QVBoxLayout, QPushButton
+    QVBoxLayout, QPushButton, QMessageBox, QGroupBox, QGridLayout
 
-from src.database.views import StationDetailsView, SensorView
+from src.api.exceptions import APIError
+from src.database.views import StationDetailsView
+from src.gui.qt import qt_to_datetime
 from src.repository import Repository
-from src.gui.qt import datetime_to_qt,qt_to_datetime
+
 
 class StationInfoWidget(QWidget):
     def __init__(self,station_details: StationDetailsView,parent : QWidget = None):
@@ -32,14 +35,55 @@ class StationInfoWidget(QWidget):
         self.setLayout(form)
 
 class StationDataWidget(QWidget):
+
+
     def __init__(self,repository: Repository,station_id: int,parent: QWidget = None):
         super().__init__(parent=parent)
-        self.setMinimumSize(QSize(500,400))
+        self.setMinimumSize(QSize(700,500))
         self.repository = repository
         self.station_id = station_id
         self.sensors = self.repository.fetch_station_sensors(self.station_id)
 
-        # top
+        # Sensor select
+
+        sensor_select = self._build_query_box()
+
+
+        # Chart
+
+        self.chart = QChart()
+
+        self.series = QSplineSeries()
+
+        self.chart.addSeries(self.series)
+        self.chart.legend().setVisible(False)
+
+        self.axis_x = QDateTimeAxis(format="MM-dd hh:mm")
+        self.axis_x.setTitleText("Czas")
+        self.axis_x.setTitleVisible(False)
+
+        self.axis_y = QValueAxis()
+        self.axis_y.setTitleText("Wartość")
+        self.axis_y.setTitleVisible(False)
+
+        self.chart.addAxis(self.axis_x,Qt.AlignmentFlag.AlignBottom)
+        self.chart.addAxis(self.axis_y,Qt.AlignmentFlag.AlignLeft)
+        self.series.attachAxis(self.axis_x)
+        self.series.attachAxis(self.axis_y)
+        self.chart_view = QChartView(self.chart)
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing,True)
+
+        # Analytics data
+
+        stats_box = self._build_stats_box()
+
+        self.layout = QVBoxLayout(self)
+        self.layout.addWidget(sensor_select)
+        self.layout.addWidget(self.chart_view, stretch=1)
+        self.layout.addWidget(stats_box)
+
+    def _build_query_box(self):
+        box = QGroupBox("Wybierz sensor")
 
         sensor_combo_label = QLabel("Sensor: ", self)
         self.sensor_combo = QComboBox(self,editable=True)
@@ -84,76 +128,118 @@ class StationDataWidget(QWidget):
         sensor_select_layout.addWidget(range_to_label)
         sensor_select_layout.addWidget(self.date_to_edit,stretch=1)
         sensor_select_layout.addWidget(display_btn,stretch=1)
+        box.setLayout(sensor_select_layout)
+        return box
 
-        # Chart
 
-        self.chart = QChart()
+    def _build_stats_box(self):
+        box = QGroupBox("Statystyki")
+        font_val = QFont()
+        font_val.setPointSize(10)
+        font_val.setBold(True)
 
-        self.series = QSplineSeries()
+        grid = QHBoxLayout()
+        # maks
+        lbl_max = QLabel("Maksymalna:")
+        val_max = QLabel("—")
+        val_max.setFont(font_val)
+        val_max.setStyleSheet("color: red;")
+        grid.addWidget(lbl_max)
+        grid.addWidget(val_max)
 
-        self.chart.addSeries(self.series)
-        self.chart.legend().setVisible(False)
+        # min
+        lbl_min = QLabel("Minimalna:")
+        val_min = QLabel("—")
+        val_min.setFont(font_val)
+        val_min.setStyleSheet("color: blue;")
+        grid.addWidget(lbl_min)
+        grid.addWidget(val_min)
 
-        self.axis_x = QDateTimeAxis(format="MM-dd hh:mm")
-        self.axis_x.setTitleText("Czas")
-        self.axis_x.setTitleVisible(False)
+        # trend
+        lbl_trend = QLabel("Trend:")
+        txt_trend = QLabel("—")
+        txt_trend.setFont(font_val)
+        grid.addWidget(lbl_trend)
+        grid.addWidget(txt_trend)
 
-        self.axis_y = QValueAxis()
-        self.axis_y.setTitleText("Wartość")
-        self.axis_y.setTitleVisible(False)
+        box.setLayout(grid)
 
-        self.chart.addAxis(self.axis_x,Qt.AlignmentFlag.AlignBottom)
-        self.chart.addAxis(self.axis_y,Qt.AlignmentFlag.AlignLeft)
-        self.series.attachAxis(self.axis_x)
-        self.series.attachAxis(self.axis_y)
-        self.chart_view = QChartView(self.chart)
-        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing,True)
-
-        self.layout = QVBoxLayout(self)
-        self.layout.addLayout(sensor_select_layout)
-        self.layout.addWidget(self.chart_view,stretch=1)
+        # przechowaj referencje, żeby potem się nie zgubiły
+        self.stats = {
+            "val_max": val_max,
+            "val_min": val_min,
+            "txt_trend": txt_trend
+        }
+        return box
 
     def load_data(self):
-        current_sensor: SensorView = self.sensor_combo.currentData()
-
-        if current_sensor is None:
+        current_sensor = self.sensor_combo.currentData()
+        if not current_sensor:
             return
 
-        datetime_from = qt_to_datetime(self.date_from_edit.dateTime())
-        datetime_to = qt_to_datetime(self.date_to_edit.dateTime())
+        # Pobranie zakresu czasowego
+        dt_from = qt_to_datetime(self.date_from_edit.dateTime())
+        dt_to = qt_to_datetime(self.date_to_edit.dateTime())
 
+        # Fetch danych
+        data = self.repository.fetch_sensor_data(
+            current_sensor.id, dt_from, dt_to
+        )
+
+        if not data:
+            QMessageBox.information(
+                self, "Brak danych",
+                "Brak dostępnych danych pomiarowych w wybranym zakresie!"
+            )
+            return
+
+        # Zamiana na (timestamp_ms, value) i sortowanie
+        numeric = sorted(
+            ((int(entry.date.timestamp() * 1000), entry.value) for entry in data),
+            key=lambda x: x[0]
+        )
+        xs, ys = zip(*numeric)
+
+        # Ustawienie zakresów osi
+        self.axis_x.setRange(
+            QDateTime.fromMSecsSinceEpoch(xs[0]),
+            QDateTime.fromMSecsSinceEpoch(xs[-1])
+        )
+        self.axis_y.setRange(0, max(ys) * 1.1)
+
+        # Wypisanie serii
         self.series.clear()
+        for x, y in numeric:
+            self.series.append(x, y)
 
-        data = [
-            (int(entry.date.timestamp() * 1000), entry.value)
-            for entry in self.repository.fetch_sensor_data(current_sensor.id, datetime_from, datetime_to)
-        ]
-        data.sort(key=lambda x: x[0])
+        # Obliczenie min/max
+        min_idx = ys.index(min(ys))
+        max_idx = ys.index(max(ys))
+        min_ts, min_val = numeric[min_idx]
+        max_ts, max_val = numeric[max_idx]
+        min_dt = datetime.fromtimestamp(min_ts / 1000)
+        max_dt = datetime.fromtimestamp(max_ts / 1000)
 
-        if data:
-            xs,ys = zip(*data)
+        self.stats['val_min'].setText(f"{min_val} ({min_dt})")
+        self.stats['val_max'].setText(f"{max_val} ({max_dt})")
+        # Obliczenie trendu (regresja liniowa)
+        # weź czasy jako liczby (timestamp)
+        x = np.array([sv.date.timestamp() for sv in data], dtype=float)
+        y = np.array([sv.value for sv in data], dtype=float)
 
-            self.axis_x.setRange(
-                QDateTime.fromMSecsSinceEpoch(min(xs)),
-                QDateTime.fromMSecsSinceEpoch(max(xs))
-            )
-            self.axis_y.setRange(
-                0,max(ys) * 1.1
-            )
-        else:
-            self.axis_x.setRange(self.date_from_edit.dateTime(),
-                                 self.date_to_edit.dateTime())
-            self.axis_y.setRange(0, 1)
+        # y = m * x + b
+        A = np.vstack([x, np.ones_like(x)]).T
+        m, _ = np.linalg.lstsq(A, y, rcond=None)[0]
 
+        def trend_str():
+            if m > 0:
+                return "rosnący"
+            elif m < 0:
+                return "malejący"
+            else:
+                return "stały"
 
-        for ms,val in data:
-            self.series.append(ms,val)
-
-        min_x = min(data,key=lambda x:x[0])
-        max_x = max(data,key=lambda x:x[0])
-
-        
-
+        self.stats['txt_trend'].setText(f"{trend_str()}")
 
     @Slot()
     def on_display_btn(self):

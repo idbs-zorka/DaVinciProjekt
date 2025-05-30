@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 import src.database.views as views
 from src.api.client import Client as APIClient
+from src.api.exceptions import APIError
 from src.config import UPDATE_INTERVALS
 from src.database.client import Client as DatabaseClient
 
@@ -115,9 +116,10 @@ class Repository:
 
 
     def update_sensor_data(self,sensor_id: int,date_from: datetime,date_to: datetime):
-        days = (datetime.now() - date_from).days
+        now = datetime.now()
+        from_delta = (now - date_from)
 
-        if days >= 3:
+        if from_delta >= timedelta(days=3,hours=1):
             data = self._api_client.fetch_sensor_archival_data(
                 sensor_id=sensor_id,
                 date_from=date_from,
@@ -125,8 +127,18 @@ class Repository:
             )
             self._database_client.update_sensor_data(sensor_id, data)
 
-        data = self._api_client.fetch_sensor_data(sensor_id)
-        self._database_client.update_sensor_data(sensor_id,data)
+        to_delta = (now - date_to)
+
+        if to_delta <= timedelta(days=3,hours=1):
+            try:
+                data = self._api_client.fetch_sensor_data(sensor_id)
+                self._database_client.update_sensor_data(sensor_id, data)
+            except APIError as e:
+                match e.code:
+                    case "API-ERR-100003":
+                        pass
+                    case _:
+                        raise e
 
     def fetch_sensor_data(
             self,
