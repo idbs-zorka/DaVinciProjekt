@@ -131,6 +131,7 @@ class StationSelectWidget(QWidget):
         self.set_station_list_items(self.stations)
 
         self.stations_list_widget.itemClicked.connect(self.on_station_clicked)
+        self.stations_list_widget.itemDoubleClicked.connect(self.on_station_double_clicked)
 
         left = QVBoxLayout()
         left.addWidget(self.select_filter_widget)
@@ -193,6 +194,11 @@ class StationSelectWidget(QWidget):
     def setup_markers(self):
         for st in self.stations:
             self.map_view.add_station(st.latitude,st.longitude,st.id)
+
+    @Slot(QListWidgetItem)
+    def on_station_double_clicked(self,item: QListWidgetItem):
+        station = item.data(Qt.ItemDataRole.UserRole)
+        self.stationSelected.emit(station.id)
 
     @Slot(QListWidgetItem)
     def on_station_clicked(self,item: QListWidgetItem):

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLay
     QVBoxLayout, QPushButton, QMessageBox, QGroupBox, QGridLayout
 
 from src.api.exceptions import APIError
-from src.database.views import StationDetailsView
+from src.database.views import StationDetailsView, SensorView
 from src.gui.qt import qt_to_datetime
 from src.repository import Repository
 
@@ -138,42 +138,55 @@ class StationDataWidget(QWidget):
         font_val.setPointSize(10)
         font_val.setBold(True)
 
-        grid = QHBoxLayout()
+        grid = QGridLayout()
+
         # maks
-        lbl_max = QLabel("Maksymalna:")
-        val_max = QLabel("—")
-        val_max.setFont(font_val)
-        val_max.setStyleSheet("color: red;")
-        grid.addWidget(lbl_max)
-        grid.addWidget(val_max)
+        max_layout = QHBoxLayout()
+        max_label = QLabel("Maksymalna:")
+        self.max_value_label = QLabel("—")
+        self.max_value_label.setFont(font_val)
+        self.max_value_label.setStyleSheet("color: red;")
+        max_layout.addWidget(max_label)
+        max_layout.addWidget(self.max_value_label)
 
         # min
-        lbl_min = QLabel("Minimalna:")
-        val_min = QLabel("—")
-        val_min.setFont(font_val)
-        val_min.setStyleSheet("color: blue;")
-        grid.addWidget(lbl_min)
-        grid.addWidget(val_min)
+        min_layout = QHBoxLayout()
+        min_label = QLabel("Minimalna:")
+        self.min_value_label = QLabel("—")
+        self.min_value_label.setFont(font_val)
+        self.min_value_label.setStyleSheet("color: blue;")
+        min_layout.addWidget(min_label)
+        min_layout.addWidget(self.min_value_label)
+
+        # avg
+
+        avg_layout = QHBoxLayout()
+        avg_label = QLabel("Średnia:")
+        self.avg_value_label = QLabel("—")
+        self.avg_value_label.setFont(font_val)
+        self.avg_value_label.setStyleSheet("color: blue;")
+        avg_layout.addWidget(avg_label)
+        avg_layout.addWidget(self.avg_value_label)
 
         # trend
-        lbl_trend = QLabel("Trend:")
-        txt_trend = QLabel("—")
-        txt_trend.setFont(font_val)
-        grid.addWidget(lbl_trend)
-        grid.addWidget(txt_trend)
+        trend_layout = QHBoxLayout()
+        trend_label = QLabel("Trend:")
+        self.trend_value_label = QLabel("—")
+        self.trend_value_label.setFont(font_val)
+        self.trend_value_label.setStyleSheet("color: blue;")
+        trend_layout.addWidget(trend_label)
+        trend_layout.addWidget(self.trend_value_label)
 
+        grid = QGridLayout()
+        grid.addLayout(max_layout, 0, 0)
+        grid.addLayout(min_layout, 0, 1)
+        grid.addLayout(avg_layout, 1, 0)
+        grid.addLayout(trend_layout, 1, 1)
         box.setLayout(grid)
-
-        # przechowaj referencje, żeby potem się nie zgubiły
-        self.stats = {
-            "val_max": val_max,
-            "val_min": val_min,
-            "txt_trend": txt_trend
-        }
         return box
 
     def load_data(self):
-        current_sensor = self.sensor_combo.currentData()
+        current_sensor: SensorView = self.sensor_combo.currentData()
         if not current_sensor:
             return
 
@@ -220,8 +233,14 @@ class StationDataWidget(QWidget):
         min_dt = datetime.fromtimestamp(min_ts / 1000)
         max_dt = datetime.fromtimestamp(max_ts / 1000)
 
-        self.stats['val_min'].setText(f"{min_val} ({min_dt})")
-        self.stats['val_max'].setText(f"{max_val} ({max_dt})")
+        avg_val = np.average(ys)
+
+        self.min_value_label.setText(f"{min_val:.2f} µg/m³ ({min_dt})")
+        self.max_value_label.setText(f"{max_val:.2f} µg/m³ ({max_dt})")
+        self.avg_value_label.setText(f"{avg_val:.4f} µg/m³")
+
+        # TODO: Add all points (min,max,avg,maybe trend)
+
         # Obliczenie trendu (regresja liniowa)
         # weź czasy jako liczby (timestamp)
         x = np.array([sv.date.timestamp() for sv in data], dtype=float)
@@ -239,10 +258,22 @@ class StationDataWidget(QWidget):
             else:
                 return "stały"
 
-        self.stats['txt_trend'].setText(f"{trend_str()}")
+        self.trend_value_label.setText(f"{trend_str()}")
 
     @Slot()
     def on_display_btn(self):
+        date_from = self.date_from_edit.dateTime()
+        date_to = self.date_to_edit.dateTime()
+        days_diff = date_from.daysTo(date_to)
+
+        if days_diff > 30:
+            QMessageBox.warning(
+                self,
+                "Błędny zakres",
+                "Możesz wyświetlić maksymalnie 30 dni naraz, popraw zakres"
+            )
+            return
+
         self.load_data()
 
 class StationDetailsWidget(QTabWidget):
