@@ -1,11 +1,11 @@
 from datetime import datetime
 
 import numpy as np
-from PySide6.QtCharts import QChart, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries
-from PySide6.QtCore import QDateTime, Slot, QSize
-from PySide6.QtGui import Qt, QPainter, QFont, QPixmap
+from PySide6.QtCharts import QChart, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries, QScatterSeries
+from PySide6.QtCore import QDateTime, Slot, QSize, QPointF
+from PySide6.QtGui import Qt, QPainter, QFont, QPixmap, QColorConstants, QCursor
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLayout, QComboBox, QDateTimeEdit, \
-    QVBoxLayout, QPushButton, QMessageBox, QGroupBox, QGridLayout
+    QVBoxLayout, QPushButton, QMessageBox, QGroupBox, QGridLayout, QToolTip
 
 from src.api.exceptions import APIError
 from src.database.views import StationDetailsView, SensorView
@@ -48,14 +48,10 @@ class StationDataWidget(QWidget):
 
         sensor_select = self._build_query_box()
 
-
-        # Chart
-
+        # ---------------------------------------------------------
+        # 1. Utworzenie wykresu i osi
+        # ---------------------------------------------------------
         self.chart = QChart()
-
-        self.series = QSplineSeries()
-
-        self.chart.addSeries(self.series)
         self.chart.legend().setVisible(False)
 
         self.axis_x = QDateTimeAxis(format="MM-dd hh:mm")
@@ -66,12 +62,57 @@ class StationDataWidget(QWidget):
         self.axis_y.setTitleText("Wartość")
         self.axis_y.setTitleVisible(False)
 
-        self.chart.addAxis(self.axis_x,Qt.AlignmentFlag.AlignBottom)
-        self.chart.addAxis(self.axis_y,Qt.AlignmentFlag.AlignLeft)
+        # Dodajemy osie do wykresu ZANIM będziemy do nich przyczepiać serie
+        self.chart.addAxis(self.axis_x, Qt.AlignmentFlag.AlignBottom)
+        self.chart.addAxis(self.axis_y, Qt.AlignmentFlag.AlignLeft)
+
+        # ---------------------------------------------------------
+        # 2. Główna seria (QSplineSeries)
+        # ---------------------------------------------------------
+        self.series = QSplineSeries()
+        self.series.hovered.connect(self._on_point_hovered)
+        # 2.1 Dodajemy serię do wykresu
+        self.chart.addSeries(self.series)
+
+        # 2.2 Teraz przyczepiamy już dodaną serię do istniejących osi
         self.series.attachAxis(self.axis_x)
         self.series.attachAxis(self.axis_y)
+
+        # ---------------------------------------------------------
+        # 3. Seria punktów minimalnych (QScatterSeries)
+        # ---------------------------------------------------------
+        self.min_scatter = QScatterSeries()
+        self.min_scatter.setName("Minimum")
+        self.min_scatter.setMarkerSize(12)
+        self.min_scatter.setColor(QColorConstants.Blue)
+
+        # 3.1 Dodajemy serię punktów do wykresu
+        self.chart.addSeries(self.min_scatter)
+
+        # 3.2 Przyczepiamy ją do tej samej osi X i Y co główną serię
+        self.min_scatter.attachAxis(self.axis_x)
+        self.min_scatter.attachAxis(self.axis_y)
+
+        # ---------------------------------------------------------
+        # 4. Seria punktów maksymalnych (QScatterSeries)
+        # ---------------------------------------------------------
+        self.max_scatter = QScatterSeries()
+        self.max_scatter.setName("Maksimum")
+        self.max_scatter.setMarkerSize(12)
+        self.max_scatter.setColor(QColorConstants.Red)
+
+        # 4.1 Dodajemy serię punktów do wykresu
+        self.chart.addSeries(self.max_scatter)
+
+        # 4.2 Przyczepiamy ją do tej samej osi X i Y co reszta wykresu
+        self.max_scatter.attachAxis(self.axis_x)
+        self.max_scatter.attachAxis(self.axis_y)
+
+        # ---------------------------------------------------------
+        # 5. QChartView
+        # ---------------------------------------------------------
         self.chart_view = QChartView(self.chart)
-        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing,True)
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         # Analytics data
 
@@ -164,7 +205,7 @@ class StationDataWidget(QWidget):
         avg_label = QLabel("Średnia:")
         self.avg_value_label = QLabel("—")
         self.avg_value_label.setFont(font_val)
-        self.avg_value_label.setStyleSheet("color: blue;")
+        self.avg_value_label.setStyleSheet("color: white;")
         avg_layout.addWidget(avg_label)
         avg_layout.addWidget(self.avg_value_label)
 
@@ -173,7 +214,7 @@ class StationDataWidget(QWidget):
         trend_label = QLabel("Trend:")
         self.trend_value_label = QLabel("—")
         self.trend_value_label.setFont(font_val)
-        self.trend_value_label.setStyleSheet("color: blue;")
+        self.trend_value_label.setStyleSheet("color: white;")
         trend_layout.addWidget(trend_label)
         trend_layout.addWidget(self.trend_value_label)
 
@@ -222,6 +263,9 @@ class StationDataWidget(QWidget):
 
         # Wypisanie serii
         self.series.clear()
+        self.min_scatter.clear()
+        self.max_scatter.clear()
+
         for x, y in numeric:
             self.series.append(x, y)
 
@@ -239,7 +283,10 @@ class StationDataWidget(QWidget):
         self.max_value_label.setText(f"{max_val:.2f} µg/m³ ({max_dt})")
         self.avg_value_label.setText(f"{avg_val:.4f} µg/m³")
 
+
         # TODO: Add all points (min,max,avg,maybe trend)
+        self.min_scatter.append(min_ts,min_val)
+        self.max_scatter.append(max_ts,max_val)
 
         # Obliczenie trendu (regresja liniowa)
         # weź czasy jako liczby (timestamp)
@@ -275,6 +322,43 @@ class StationDataWidget(QWidget):
             return
 
         self.load_data()
+
+    @Slot(QPointF,bool)
+    def _on_point_hovered(self, point: QPointF, state: bool):
+        """
+        point.x() – to timestamp w milisekundach (QPointF.x zwraca double),
+        point.y() – to wartość pomiaru (double).
+        state == True  => kursor właśnie wszedł na ten punkt,
+        state == False => kursor wyszedł z punktu (można zamknąć tooltip, jeśli chcemy).
+        """
+        if not state:
+            # Możemy opcjonalnie ukryć tooltip; w Qt tooltip wygaśnie samodzielnie, więc nie musimy tu nic robić.
+            return
+
+        # 1. Konwersja x (double = ms od epoch) na QDateTime
+        ts_ms = int(point.x())
+        dt = QDateTime.fromMSecsSinceEpoch(ts_ms, Qt.TimeSpec.LocalTime)
+
+        # 2. Formatowanie daty w preferowany sposób, np. "YYYY-MM-dd hh:mm"
+        data_str = dt.toString("yyyy-MM-dd hh:mm")
+
+        # 3. Wartość pomiaru
+        wartosc = point.y()
+
+        # 4. Przygotowanie tekstu pod tooltip
+        text = f"{data_str}\n{wartosc:.2f} µg/m³"
+
+        # 5. Wyświetlamy tooltip pod kursorem
+        QToolTip.setFont(QFont("SansSerif", 10))  # ustal font, jeśli chcesz
+        QToolTip.showText(
+            QCursor.pos(),
+            text,
+            self.chart_view,
+            self.chart_view.rect(),
+            3000     # <-- wyświetl przez 3000 ms
+        )
+        # Jeśli chcesz, żeby tooltip znikał, gdy kursor opuści punkt, nie musisz nic robić
+        # – Qt sam schowa go po chwili lub gdy kursor się przesunie.
 
 class StationDetailsWidget(QTabWidget):
 
