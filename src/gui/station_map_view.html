@@ -3,12 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <title>Mapa Leaflet</title>
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script> <!-- Script ktory pozwala laczyc sie pythonem -->
+    <script>
+      // Laduje backend pythona
+      new QWebChannel(qt.webChannelTransport, channel => {
+        window.backend = channel.objects.backend;
+      });
+      
+      function on_leaflet_load()
+      {
+        window.backend.on_leaflet_load()
+      }
+
+    </script>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onload="on_leaflet_load()"></script> <!-- Polaczenie do biblioteki leaflet -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script> <!-- Polaczenie do biblioteki leaflet -->
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script> <!-- Script ktory pozwala laczyc sie pythonem -->
     <style>
       html,
       body,
@@ -20,7 +33,7 @@
     </style>
   </head>
   <body>
-    <div id="map">Mapa niedostępna!</div>
+    <div id="map">Ładowanie...</div>
 
     <script>
       // ————— Initialization —————
@@ -131,19 +144,15 @@
           initMarkersInCurrentBounds()
       }
 
-      // ————— QWebChannel hookup —————
-      new QWebChannel(qt.webChannelTransport, channel => {
-        window.backend = channel.objects.backend;
+      // Python → JS
+      backend.addStation.connect(addStation);
+      backend.setPosition.connect(setPosition);
+      backend.resetIndexes.connect(resetIndexes);
+      backend.initIndexValue.connect(initIndexValue);
 
-        // Python → JS
-        backend.addStation.connect(addStation);
-        backend.setPosition.connect(setPosition);
-        backend.resetIndexes.connect(resetIndexes);
-        backend.initIndexValue.connect(initIndexValue);
+      // Map event
+      map.on("moveend", handleMoveEnd);
 
-        // Map event
-        map.on("moveend", handleMoveEnd);
-      });
     </script>
   </body>
 </html>

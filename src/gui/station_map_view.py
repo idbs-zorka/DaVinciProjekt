@@ -2,6 +2,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Slot, QUrl, Signal
 from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWebEngineCore import QWebEngineLoadingInfo
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 
@@ -27,6 +28,11 @@ class MapViewBackend(QObject):
         print(f"Request station index value: {station_id}")
         self.requestStationIndexValue.emit(station_id)
 
+    leaftletLoaded = Signal()
+    @Slot()
+    def on_leaflet_load(self):
+        self.leaftletLoaded.emit()
+
 
 class StationMapViewWidget(QWebEngineView):
 
@@ -38,14 +44,16 @@ class StationMapViewWidget(QWebEngineView):
         map_path = Path(__file__).with_name("station_map_view.html").resolve()
 
         self.settings().setAttribute(self.settings().WebAttribute.LocalContentCanAccessRemoteUrls,True) #Ustawianie mozliwosci komunikacji sieciowej dla widgetu
-        self.load(QUrl.fromLocalFile(map_path))
-
         self.channel = QWebChannel()
-        self.page().setWebChannel(self.channel)
+
+        page = self.page()
+        page.setWebChannel(self.channel)
         self.channel.registerObject("backend",self.backend) # Przekazanie obiektu do JavaScriptu
 
         self.stationSelected = self.backend.stationSelected
         self.requestStationIndexValue = self.backend.requestStationIndexValue
+        self.leaftletLoaded = self.backend.leaftletLoaded
+        self.load(QUrl.fromLocalFile(map_path))
 
     def add_station(self,lat: float,lng:float,station_id: int):
         self.backend.addStation.emit(lat,lng,station_id)

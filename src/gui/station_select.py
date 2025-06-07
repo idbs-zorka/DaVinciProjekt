@@ -12,32 +12,6 @@ from src.fuzzy_seach import fuzzy_search
 from src.gui.station_map_view import StationMapViewWidget
 from src.repository import Repository
 
-
-def wait_for_signal(signal, timeout=5000):
-    """
-    Czeka na emisję danego QtSignal.
-    Zwraca krotkę argumentów, które sygnał przekazał, lub
-    rzuca TimeoutError, jeśli minie `timeout` ms.
-    """
-    loop = QEventLoop()
-    result = []
-
-    def _on_emit(*args):
-        result.append(args)
-        loop.quit()
-
-    # Podłączamy handler i watchdog co będzie pierwsze
-    signal.connect(_on_emit)
-    QTimer.singleShot(timeout, loop.quit)
-
-    loop.exec()  # <–– tu wchodzimy w pętlę aż do quit()
-
-    signal.disconnect(_on_emit)
-    if result:
-        return result[0]       # krotka argumentów
-    else:
-        raise TimeoutError(f"Sygnał nie został wyemitowany w {timeout} ms")
-
 @dataclass
 class FilterState:
     search_query: str
@@ -109,58 +83,70 @@ class StationIndexFetcher(QRunnable):
 class StationSelectWidget(QWidget):
     stationSelected = Signal(int)
 
-    def __init__(self,repository: Repository, *args,**kwargs):
+    def __init__(self, repository: Repository, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setMinimumSize(1200, 600)
+
         self.repository = repository
         self.thread_pool = QThreadPool.globalInstance()
 
-        super().__init__(*args,**kwargs)
-        self.setMinimumSize(1200,600)
-        self.layout = QHBoxLayout(self)
+        # Główny layout HBox
+        main_layout = QHBoxLayout(self)
+
+        # ——— LEWA CZĘŚĆ ———
+        left = QWidget(self)
+        left_layout = QVBoxLayout(left)
 
         self.stations = repository.get_station_list_view()
         self.filtered_stations = self.stations
 
-        cities = list(set((st.city for st in self.stations))) #Utworzenie listy niepowtarzajacych sie miast
-        cities.sort()
+        cities = sorted({st.city for st in self.stations})
 
-        self.select_filter_widget = StationSelectFilter(parent=self,cities=cities)
+        self.select_filter_widget = StationSelectFilter(parent=left, cities=cities)
         self.select_filter_widget.filter_changed.connect(self.on_filter_changed)
 
-        self.stations_list_widget = QListWidget(self)
-
+        self.stations_list_widget = QListWidget(left)
         self.set_station_list_items(self.stations)
-
         self.stations_list_widget.itemClicked.connect(self.on_station_clicked)
         self.stations_list_widget.itemDoubleClicked.connect(self.on_station_double_clicked)
 
-        left = QVBoxLayout()
-        left.addWidget(self.select_filter_widget)
-        left.addWidget(self.stations_list_widget)
+        left_layout.addWidget(self.select_filter_widget)
+        left_layout.addWidget(self.stations_list_widget)
 
+        # ——— PRAWA CZĘŚĆ ———
+        right = QWidget(self,visible=False)
+        right_layout = QVBoxLayout(right)
 
+        # Formularz wyboru typu indeksu AQ
         aq_index_type_form = QFormLayout()
-
         self.aq_index_type_combo = QComboBox()
         self.aq_index_type_combo.addItems(AQ_TYPES)
         self.aq_index_type_combo.currentIndexChanged.connect(self.on_aq_index_changed)
+        aq_index_type_form.addRow("Indeks:", self.aq_index_type_combo)
 
-        aq_index_type_form.addRow("Indeks", self.aq_index_type_combo)
+        # Widget mapy
+        self.map_view = StationMapViewWidget(parent=right)
+        self.map_view.leaftletLoaded.connect(lambda : right.setVisible(True))
+        self.map_view.loadFinished.connect(self.on_map_loaded)
+        self.map_view.stationSelected.connect(self.on_station_marker_clicked)
+        self.map_view.requestStationIndexValue.connect(self.on_request_station_index_value)
 
-        self.map_view = StationMapViewWidget(parent=self)
+        right_layout.addLayout(aq_index_type_form, stretch=0)
+        right_layout.addWidget(self.map_view, stretch=1)
 
-        wait_for_signal(self.map_view.loadFinished) # oczekiwanie na zaladowanie mapy
+        # ——— DODANIE DO GŁÓWNEGO ———
+        main_layout.addWidget(left, 0)  # lewy panel bez stretchu
+        main_layout.addWidget(right, 1)  # prawy panel z większym stretchem
 
+        # (opcjonalnie) wyrównanie elementów
+        main_layout.setStretchFactor(left, 0)
+        main_layout.setStretchFactor(right, 1)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+    @Slot()
+    def on_map_loaded(self):
         self.setup_markers()
-
-        self.map_view.stationSelected.connect(self.on_station_marker_clicked) #Reaguje na klikniecie
-        self.map_view.requestStationIndexValue.connect(self.on_request_station_index_value) # Zadanie wartosci indeksu stacji w czesci wyswietlanej
-
-        right = QVBoxLayout()
-        right.addLayout(aq_index_type_form,stretch=0)
-        right.addWidget(self.map_view,stretch=1)
-
-        self.layout.addLayout(left, stretch=0)
-        self.layout.addLayout(right, stretch=1)
 
     @Slot(FilterState)
     def on_filter_changed(self,state: FilterState):

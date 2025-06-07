@@ -1,9 +1,10 @@
 import logging
-from app import Application
 
-from database.client import Client as DatabaseClient
 from api.client import Client as APIClient
+from app import Application
+from database.client import Client as DatabaseClient
 from repository import Repository
+
 
 def main():
     database_client = DatabaseClient("database.db")

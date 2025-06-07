@@ -283,8 +283,6 @@ class StationDataWidget(QWidget):
         self.max_value_label.setText(f"{max_val:.2f} µg/m³ ({max_dt})")
         self.avg_value_label.setText(f"{avg_val:.4f} µg/m³")
 
-
-        # TODO: Add all points (min,max,avg,maybe trend)
         self.min_scatter.append(min_ts,min_val)
         self.max_scatter.append(max_ts,max_val)
 

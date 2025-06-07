@@ -1,3 +1,4 @@
+import typing
 from datetime import datetime, timedelta
 
 import src.database.views as views
@@ -5,6 +6,22 @@ from src.api.client import Client as APIClient
 from src.api.exceptions import APIError
 from src.config import UPDATE_INTERVALS
 from src.database.client import Client as DatabaseClient
+import observable
+
+
+def update_state_catcher(func: typing.Callable[..., None]) -> typing.Callable[..., None]:
+    """
+    Sprawdza czy pobranie danych z api powiodło się oraz zapisuje wynik w zmiennej
+    """
+    def wrapper(self,*args,**kwargs):
+        try:
+            func(self,*args,**kwargs)
+        except ConnectionError:
+            self.connection_state = False
+            return
+        self.connection_state = True
+
+    return wrapper
 
 
 class Repository:
@@ -17,6 +34,8 @@ class Repository:
       - pobieranie widoku listy stacji,
       - pobieranie i aktualizację szczegółowych danych jakości powietrza dla konkretnej stacji.
     """
+    connection_state: bool = True
+    connection_state_changed: observable.Observable
 
     def __init__(self, api_client: APIClient, database_client: DatabaseClient):
         """
@@ -33,6 +52,7 @@ class Repository:
         return Repository(self._api_client,DatabaseClient(self._database_client.filepath))
 
     # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
+    @update_state_catcher
     def update_stations(self):
         """
         Pobiera aktualną listę stacji z API i zapisuje ją w bazie danych.
@@ -41,7 +61,9 @@ class Repository:
           1. Wywołanie `fetch_stations()` na kliencie API.
           2. Przekazanie pobranych danych do `update_stations()` klienta bazy.
         """
+
         api_stations = self._api_client.fetch_stations()
+
         self._database_client.update_stations(
             stations=api_stations
         )
@@ -64,10 +86,12 @@ class Repository:
 
         return self._database_client.get_station_list_view()
 
+
     def fetch_station_details_view(self, station_id: int) -> views.StationDetailsView:
         return self._database_client.fetch_station_detail_view(station_id)
 
     # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
+    @update_state_catcher
     def update_station_air_quality_indexes(self, station_id: int):
         """
         Pobiera i aktualizuje wskaźniki jakości powietrza dla danej stacji.
@@ -101,6 +125,7 @@ class Repository:
 
         return self._database_client.fetch_station_air_quality_index_value(station_id, type_codename)
 
+    @update_state_catcher
     def update_station_sensors(self,station_id: int):
         stations = self._api_client.fetch_station_sensors(station_id)
         self._database_client.update_station_sensors(station_id, stations)
@@ -115,6 +140,7 @@ class Repository:
         return self._database_client.fetch_station_sensors(station_id)
 
 
+    @update_state_catcher
     def update_sensor_data(self,sensor_id: int,date_from: datetime,date_to: datetime):
         now = datetime.now()
         from_delta = (now - date_from)
@@ -136,6 +162,7 @@ class Repository:
             except APIError as e:
                 match e.code:
                     case "API-ERR-100003":
+                        #TODO: Handle too many requests error
                         pass
                     case _:
                         raise e
