@@ -120,6 +120,7 @@ class StationSelectWidget(QMainWindow):
 
         # ——— PRAWA CZĘŚĆ ———
         right = QWidget(main,visible=False)
+        self.right = right
         right.setMinimumSize(800,600)
         right_layout = QVBoxLayout(right)
 
