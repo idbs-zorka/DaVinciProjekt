@@ -1,14 +1,16 @@
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 from PySide6.QtCharts import QChart, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries, QScatterSeries
-from PySide6.QtCore import QDateTime, Slot, QSize, QPointF
+from PySide6.QtCore import QDateTime, Slot, QSize, QPointF, QThreadPool, QRunnable, Signal, QObject
 from PySide6.QtGui import Qt, QPainter, QFont, QPixmap, QColorConstants, QCursor
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLayout, QComboBox, QDateTimeEdit, \
     QVBoxLayout, QPushButton, QMessageBox, QGroupBox, QGridLayout, QToolTip
 
-from src.api.exceptions import APIError
-from src.database.views import StationDetailsView, SensorView
+from src.api.exceptions import APIError, TooManyRequests
+from src.database.views import StationDetailsView, SensorView, SensorValueView
+from src.gui.loading_overlay import LoadingOverlay
 from src.gui.qt import qt_to_datetime
 from src.repository import Repository
 
@@ -34,8 +36,29 @@ class StationInfoWidget(QWidget):
 
         self.setLayout(form)
 
-class StationDataWidget(QWidget):
+class SensorDataFetcher(QRunnable):
+    class Signals(QObject):
+        finished = Signal(Any)
+        too_many_requests = Signal()
 
+    def __init__(self,sensor_id: int,date_from: datetime,date_to: datetime,repository: Repository):
+        super().__init__()
+        self.signals = self.Signals()
+        self.sensor_id = sensor_id
+        self.date_from = date_from
+        self.date_to = date_to
+        self.repository = repository
+
+    def run(self):
+        try:
+            own_repository = self.repository.clone()
+            data = own_repository.fetch_sensor_data(self.sensor_id,self.date_from,self.date_to)
+            self.signals.finished.emit(data)
+        except TooManyRequests as e:
+            self.signals.too_many_requests.emit()
+
+
+class StationDataWidget(QWidget):
 
     def __init__(self,repository: Repository,station_id: int,parent: QWidget = None):
         super().__init__(parent=parent)
@@ -122,6 +145,10 @@ class StationDataWidget(QWidget):
         self.layout.addWidget(sensor_select)
         self.layout.addWidget(self.chart_view, stretch=1)
         self.layout.addWidget(stats_box)
+
+        # Loading overlay
+
+        self.loading_overlay = LoadingOverlay(self)
 
     def _build_query_box(self):
         box = QGroupBox("Wybierz sensor")
@@ -226,7 +253,28 @@ class StationDataWidget(QWidget):
         box.setLayout(grid)
         return box
 
-    def load_data(self):
+    _is_loading: bool = False
+
+    @property
+    def is_loading(self):
+        return self._is_loading
+
+    @is_loading.setter
+    def is_loading(self,value: bool):
+        if value:
+            self.loading_overlay.show()
+        else:
+            self.loading_overlay.hide()
+
+        self._is_loading = value
+
+    def start_loading_data(self):
+        if self.is_loading:
+            return
+        self.is_loading = True
+
+        thread_pool = QThreadPool.globalInstance()
+
         current_sensor: SensorView = self.sensor_combo.currentData()
         if not current_sensor:
             return
@@ -235,11 +283,15 @@ class StationDataWidget(QWidget):
         dt_from = qt_to_datetime(self.date_from_edit.dateTime())
         dt_to = qt_to_datetime(self.date_to_edit.dateTime())
 
-        # Fetch danych
-        data = self.repository.fetch_sensor_data(
-            current_sensor.id, dt_from, dt_to
-        )
+        # Rozpoczecie pobierania danych
+        job = SensorDataFetcher(current_sensor.id,dt_from,dt_to,self.repository.clone())
+        job.signals.finished.connect(self.on_data_load_finished)
+        job.signals.too_many_requests.connect(self.on_too_many_requests)
+        thread_pool.start(job)
 
+    @Slot()
+    def on_data_load_finished(self,data: list[SensorValueView]):
+        self.is_loading = False
         if not data:
             QMessageBox.information(
                 self, "Brak danych",
@@ -250,7 +302,7 @@ class StationDataWidget(QWidget):
         # Zamiana na (timestamp_ms, value) i sortowanie
         numeric = sorted(
             ((int(entry.date.timestamp() * 1000), entry.value) for entry in data),
-            key=lambda x: x[0]
+            key=lambda v: v[0]
         )
         xs, ys = zip(*numeric)
 
@@ -283,8 +335,8 @@ class StationDataWidget(QWidget):
         self.max_value_label.setText(f"{max_val:.2f} µg/m³ ({max_dt})")
         self.avg_value_label.setText(f"{avg_val:.4f} µg/m³")
 
-        self.min_scatter.append(min_ts,min_val)
-        self.max_scatter.append(max_ts,max_val)
+        self.min_scatter.append(min_ts, min_val)
+        self.max_scatter.append(max_ts, max_val)
 
         # Obliczenie trendu (regresja liniowa)
         # weź czasy jako liczby (timestamp)
@@ -306,6 +358,15 @@ class StationDataWidget(QWidget):
         self.trend_value_label.setText(f"{trend_str()}")
 
     @Slot()
+    def on_too_many_requests(self):
+        self.is_loading = False
+        QMessageBox.information(
+            self, "Zbyt wiele żądań",
+            "Limit zapytań do serwera został przekroczony. "
+            "Odczekaj chwilę i spróbuj ponownie."
+        )
+
+    @Slot()
     def on_display_btn(self):
         date_from = self.date_from_edit.dateTime()
         date_to = self.date_to_edit.dateTime()
@@ -319,7 +380,7 @@ class StationDataWidget(QWidget):
             )
             return
 
-        self.load_data()
+        self.start_loading_data()
 
     @Slot(QPointF,bool)
     def _on_point_hovered(self, point: QPointF, state: bool):

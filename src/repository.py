@@ -1,28 +1,14 @@
+import logging
 import typing
 from datetime import datetime, timedelta
 
+import requests.exceptions
+
 import src.database.views as views
 from src.api.client import Client as APIClient
-from src.api.exceptions import APIError
+from src.api.exceptions import APIError, TooManyRequests
 from src.config import UPDATE_INTERVALS
 from src.database.client import Client as DatabaseClient
-import observable
-
-
-def update_state_catcher(func: typing.Callable[..., None]) -> typing.Callable[..., None]:
-    """
-    Sprawdza czy pobranie danych z api powiodło się oraz zapisuje wynik w zmiennej
-    """
-    def wrapper(self,*args,**kwargs):
-        try:
-            func(self,*args,**kwargs)
-        except ConnectionError:
-            self.connection_state = False
-            return
-        self.connection_state = True
-
-    return wrapper
-
 
 class Repository:
     """
@@ -34,8 +20,6 @@ class Repository:
       - pobieranie widoku listy stacji,
       - pobieranie i aktualizację szczegółowych danych jakości powietrza dla konkretnej stacji.
     """
-    connection_state: bool = True
-    connection_state_changed: observable.Observable
 
     def __init__(self, api_client: APIClient, database_client: DatabaseClient):
         """
@@ -48,11 +32,13 @@ class Repository:
         self._api_client = api_client
         self._database_client = database_client
 
+    def api_client(self):
+        return self._api_client
+
     def clone(self):
-        return Repository(self._api_client,DatabaseClient(self._database_client.filepath))
+        return Repository(self._api_client,self._database_client.duplicate_connection())
 
     # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
-    @update_state_catcher
     def update_stations(self):
         """
         Pobiera aktualną listę stacji z API i zapisuje ją w bazie danych.
@@ -81,17 +67,28 @@ class Repository:
         last_update_at = self._database_client.get_last_stations_update()
         elapsed = datetime.now() - last_update_at
 
-        if elapsed >= UPDATE_INTERVALS['station']:
-            self.update_stations()
+        try:
+            if elapsed >= UPDATE_INTERVALS['station']:
+                self.update_stations()
+        except requests.exceptions.ConnectionError as e:
+            logging.warning("Error while updating stations: %s",e)
 
         return self._database_client.get_station_list_view()
 
 
     def fetch_station_details_view(self, station_id: int) -> views.StationDetailsView:
+        last_update_at = self._database_client.get_last_stations_update()
+        elapsed = datetime.now() - last_update_at
+
+        try:
+            if elapsed >= UPDATE_INTERVALS['station']:
+                self.update_stations()
+        except requests.exceptions.ConnectionError as e:
+            logging.warning("Error while updating stations: %s",e)
+
         return self._database_client.fetch_station_detail_view(station_id)
 
     # Ta fukcja nie jest prywatna poniewaz moze sluzyc do odswierzenia
-    @update_state_catcher
     def update_station_air_quality_indexes(self, station_id: int):
         """
         Pobiera i aktualizuje wskaźniki jakości powietrza dla danej stacji.
@@ -120,12 +117,14 @@ class Repository:
         last_update_at = self._database_client.fetch_last_station_air_quality_indexes_update(station_id)
         elapsed = datetime.now() - last_update_at
 
-        if elapsed >= UPDATE_INTERVALS['aq_indexes']:
-            self.update_station_air_quality_indexes(station_id)
+        try:
+            if elapsed >= UPDATE_INTERVALS['aq_indexes']:
+                self.update_station_air_quality_indexes(station_id)
+        except requests.exceptions.ConnectionError as e:
+            logging.warning("Error while updating air quality index values: %s",e)
 
         return self._database_client.fetch_station_air_quality_index_value(station_id, type_codename)
 
-    @update_state_catcher
     def update_station_sensors(self,station_id: int):
         stations = self._api_client.fetch_station_sensors(station_id)
         self._database_client.update_station_sensors(station_id, stations)
@@ -134,13 +133,15 @@ class Repository:
         last_update_at = self._database_client.fetch_last_station_sensors_update(station_id)
         elapsed = datetime.now() - last_update_at
 
-        if elapsed >= UPDATE_INTERVALS['sensors']:
-            self.update_station_sensors(station_id)
+        try:
+            if elapsed >= UPDATE_INTERVALS['sensors']:
+                self.update_station_sensors(station_id)
+        except requests.exceptions.ConnectionError as e:
+            logging.warning("Error while updating station sensors: %s",e)
 
         return self._database_client.fetch_station_sensors(station_id)
 
 
-    @update_state_catcher
     def update_sensor_data(self,sensor_id: int,date_from: datetime,date_to: datetime):
         now = datetime.now()
         from_delta = (now - date_from)
@@ -156,16 +157,9 @@ class Repository:
         to_delta = (now - date_to)
 
         if to_delta <= timedelta(days=3,hours=1):
-            try:
-                data = self._api_client.fetch_sensor_data(sensor_id)
-                self._database_client.update_sensor_data(sensor_id, data)
-            except APIError as e:
-                match e.code:
-                    case "API-ERR-100003":
-                        #TODO: Handle too many requests error
-                        pass
-                    case _:
-                        raise e
+            data = self._api_client.fetch_sensor_data(sensor_id)
+            self._database_client.update_sensor_data(sensor_id, data)
+
 
     def fetch_sensor_data(
             self,
@@ -181,17 +175,21 @@ class Repository:
         latest = self._database_client.fetch_latest_sensor_record_date(sensor_id)
         oldest = self._database_client.fetch_oldest_sensor_record_date(sensor_id)
 
-        # jeśli brak w ogóle rekordów, pobierz cały przedział
-        if latest is None or oldest is None:
-            self.update_sensor_data(sensor_id, date_from, date_to)
-        else:
-            # jeśli date_to jest co najmniej o godzinę później niż latest
-            if date_to.replace(minute=0,second=0,microsecond=0) != latest.replace(minute=0,second=0,microsecond=0):
-                self.update_sensor_data(sensor_id, latest, date_to)
 
-            # jeśli date_from jest co najmniej o godzinę wcześniej niż oldest
-            if date_from <= oldest - timedelta(hours=1):
-                self.update_sensor_data(sensor_id, date_from, oldest)
+        try:
+            # jeśli brak w ogóle rekordów, pobierz cały przedział
+            if latest is None or oldest is None:
+                self.update_sensor_data(sensor_id, date_from, date_to)
+            else:
+                # jeśli date_to jest co najmniej o godzinę później niż latest
+                if date_to.replace(minute=0,second=0,microsecond=0) != latest.replace(minute=0,second=0,microsecond=0):
+                    self.update_sensor_data(sensor_id, max(date_from,latest), date_to)
+
+                # jeśli date_from jest co najmniej o godzinę wcześniej niż oldest
+                if date_from <= oldest - timedelta(hours=1):
+                    self.update_sensor_data(sensor_id, date_from, min(date_to,oldest))
+        except requests.exceptions.ConnectionError as e:
+            logging.warning("Error while updating sensor data: %s", e)
 
         # w końcu zawsze zwracamy dane z bazy w zadanym przedziale
         return self._database_client.fetch_sensor_data(sensor_id, date_from, date_to)

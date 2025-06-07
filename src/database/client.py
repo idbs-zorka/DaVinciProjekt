@@ -1,4 +1,6 @@
+import os.path
 import typing
+from copy import copy
 from datetime import datetime
 import sqlite3
 from enum import Enum
@@ -8,6 +10,8 @@ import src.database.views as views
 from src.api.models import IndexCategory
 import src.config as config
 
+# Dodatkowa stała której nie ma w opowiedzi z API a którą wykorzystujemy
+OVERALL_SENSOR_TYPE_CODENAME: str = "Ogólny"
 
 class Client:
     """
@@ -16,8 +20,7 @@ class Client:
       - przechowywanie i aktualizację danych o stacjach oraz wskaźnikach jakości powietrza,
       - odczyt widoków z tabel.
     """
-    # Dodatkowa stała której nie ma w opowiedzi z API a którą wykorzystujemy
-    OVERALL_SENSOR_TYPE_CODENAME: str = "Ogólny"
+
 
     # Tworzymy enumerator
     class GlobalUpdateIds(Enum):
@@ -34,11 +37,21 @@ class Client:
         Args:
             database_filepath (str): Ścieżka do pliku SQLite.
         """
+
+        needs_populate = (os.path.exists(database_filepath) == False)
+
         self.filepath = database_filepath
         self.__conn = sqlite3.connect(database_filepath)
+
         self.__conn.row_factory = sqlite3.Row # Możliwość odwołania się do kolumn bazy
         self.__cursor = self.__conn.cursor()
-        self.__populate_tables() # Tworzy struktury bazy i wypełnia stałymi elementami
+
+        if needs_populate:
+            self.__populate_tables()  # Tworzy struktury bazy i wypełnia stałymi elementami
+
+    def duplicate_connection(self):
+        return Client(self.filepath)
+
 
     def __populate_tables(self):
         """
@@ -421,7 +434,7 @@ class Client:
         """
         # Laczenie w jedna tabele indeksu ogolnego 'ogólny' z reszta indeksow odczytanych
         all_indexes = (
-            (self.OVERALL_SENSOR_TYPE_CODENAME, indexes.overall),
+            (OVERALL_SENSOR_TYPE_CODENAME, indexes.overall),
             *indexes.sensors.items()
         )
         params = (
@@ -584,6 +597,7 @@ class Client:
             ON CONFLICT(sensor_id,date) DO UPDATE
                 SET value=EXCLUDED.value
         """, [(sensor_id,entry.date.isoformat(),entry.value) for entry in data])
+        self.__conn.commit()
 
     def fetch_latest_sensor_record_date(self,sensor_id: int) -> datetime | None:
         qry = self.__cursor.execute("""

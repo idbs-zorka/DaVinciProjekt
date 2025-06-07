@@ -7,6 +7,7 @@ import requests
 
 import src.api.exceptions as exceptions
 import src.api.models as models
+from src.api.exceptions import APIError, TooManyRequests
 
 
 class Client:
@@ -16,6 +17,21 @@ class Client:
     """
 
     __BASE = "https://api.gios.gov.pl"
+    _connection_status: bool = True
+    connection_status_changed : typing.Callable[[bool],None] = None
+
+    @property
+    def connection_status(self):
+        return self._connection_status
+
+    @connection_status.setter
+    def connection_status(self,value: bool):
+        if self._connection_status == value:
+            return
+
+        self._connection_status = value
+        if self.connection_status_changed is not None:
+            self.connection_status_changed(value)
 
     def make_url(
         self,
@@ -70,6 +86,7 @@ class Client:
             url = self.make_url(endpoint, page, size, args)
             logging.info(f"API Request: {url}")
             response = requests.get(url, timeout=None)
+            self.connection_status = True
             response.raise_for_status()
             logging.info(f"API Request finished!")
             return response.json()
@@ -82,6 +99,9 @@ class Client:
                 result=payload.get("error_result"),
                 solution=payload.get("error_solution"),
             )
+        except requests.exceptions.ConnectionError as conn_err:
+            self.connection_status = False
+            raise conn_err
 
     def __get_collected(
         self,
@@ -396,10 +416,18 @@ class Client:
                     )
                 )
 
-        self.__get_each(
-            endpoint=f"pjp-api/v1/rest/archivalData/getDataBySensor/{sensor_id}",
-            target="Lista archiwalnych wyników pomiarów",
-            callback=collect,
-            args=params,
-        )
+        try:
+            self.__get_each(
+                endpoint=f"pjp-api/v1/rest/archivalData/getDataBySensor/{sensor_id}",
+                target="Lista archiwalnych wyników pomiarów",
+                callback=collect,
+                args=params,
+            )
+        except APIError as e:
+            match e.code:
+                case "API-ERR-100003":
+                    raise TooManyRequests(
+                        "API rate limit exceeded (max 2 requests per minute). "
+                        "Please wait before retrying the request."
+                    )
         return result

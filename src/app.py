@@ -1,4 +1,4 @@
-from PySide6.QtCore import Slot
+from PySide6.QtCore import Slot, Signal
 from PySide6.QtWidgets import QApplication, QDialog, QBoxLayout, QVBoxLayout  # Biblioteka graficzna
 from repository import Repository
 from gui.station_select import StationSelectWidget
@@ -8,16 +8,24 @@ class Application(QApplication):
     station_select: StationSelectWidget
     station_details: StationDetailsWidget
 
+    api_connection_status_changed = Signal(bool)
+
+
     def __init__(self,repository: Repository,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.repository = repository
 
-    def run(self):
+        api_client = self.repository.api_client()
+        api_client.connection_status_changed = self.on_api_connection_status_changed
+
+    def on_api_connection_status_changed(self,value: bool):
+        self.api_connection_status_changed.emit(value)
+
+    def exec(self):
         self.station_select = StationSelectWidget(self.repository)
         self.station_select.stationSelected.connect(self.open_station_details)
-
         self.station_select.show()
-        self.exec()
+        return super().exec()
 
     @Slot(int)
     def open_station_details(self,station_id: int):

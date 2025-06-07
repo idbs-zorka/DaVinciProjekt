@@ -1,16 +1,20 @@
-from dataclasses import dataclass
-from typing import Sequence
-
 import logging
-from PySide6.QtCore import Signal, Slot, Qt, QTimer, QEventLoop, QThreadPool, QRunnable, QObject
+from dataclasses import dataclass
+from typing import Sequence, cast, TYPE_CHECKING
+
+from PySide6.QtCore import Signal, Slot, Qt, QThreadPool, QRunnable, QObject
 from PySide6.QtWidgets import QWidget, QLineEdit, QComboBox, QFormLayout, QListWidget, QVBoxLayout, QHBoxLayout, \
-    QListWidgetItem
+    QListWidgetItem, QMainWindow, QStatusBar, QLabel, QApplication, QMessageBox
 
 from src.config import AQ_TYPES
 from src.database.views import StationListView
 from src.fuzzy_seach import fuzzy_search
 from src.gui.station_map_view import StationMapViewWidget
 from src.repository import Repository
+
+# Musi tak być aby uniknąć zależności cyklicznej
+if TYPE_CHECKING:
+    from src.app import Application
 
 @dataclass
 class FilterState:
@@ -80,21 +84,22 @@ class StationIndexFetcher(QRunnable):
         logging.info(f"Fetcher finished: station_id:  {self.station_id}, index_type: {self.index_type}")
 
 
-class StationSelectWidget(QWidget):
+class StationSelectWidget(QMainWindow):
     stationSelected = Signal(int)
 
     def __init__(self, repository: Repository, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setMinimumSize(1200, 600)
 
         self.repository = repository
+
         self.thread_pool = QThreadPool.globalInstance()
 
         # Główny layout HBox
-        main_layout = QHBoxLayout(self)
+        main = QWidget(self)
 
         # ——— LEWA CZĘŚĆ ———
-        left = QWidget(self)
+        left = QWidget(main)
+        left.setMinimumSize(350,450)
         left_layout = QVBoxLayout(left)
 
         self.stations = repository.get_station_list_view()
@@ -114,7 +119,8 @@ class StationSelectWidget(QWidget):
         left_layout.addWidget(self.stations_list_widget)
 
         # ——— PRAWA CZĘŚĆ ———
-        right = QWidget(self,visible=False)
+        right = QWidget(main,visible=False)
+        right.setMinimumSize(800,600)
         right_layout = QVBoxLayout(right)
 
         # Formularz wyboru typu indeksu AQ
@@ -135,6 +141,8 @@ class StationSelectWidget(QWidget):
         right_layout.addWidget(self.map_view, stretch=1)
 
         # ——— DODANIE DO GŁÓWNEGO ———
+        main_layout = QHBoxLayout(main)
+
         main_layout.addWidget(left, 0)  # lewy panel bez stretchu
         main_layout.addWidget(right, 1)  # prawy panel z większym stretchem
 
@@ -144,9 +152,59 @@ class StationSelectWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        self.setCentralWidget(main)
+
+        # Status bar
+
+        status_bar = QStatusBar(self)
+        self.setStatusBar(status_bar)
+        self.connection_status_label = QLabel("Status danych: {}")
+        status_bar.addPermanentWidget(self.connection_status_label)
+
+        # Wymuszenie sprawdzenia połączenia z api
+        connection_status = self.repository.api_client().connection_status
+        self.on_api_connection_status_changed(connection_status)
+
+        app = cast('Application',QApplication.instance())
+        app.api_connection_status_changed.connect(self.on_api_connection_status_changed)
+
+
+    @Slot(bool)
+    def on_api_connection_status_changed(self,value: bool):
+        text = "Aktualne" if value else "Lokalne"
+        self.connection_status_label.setText(f"Status danych: {text}")
+
+        if value == False:
+            QMessageBox.warning(
+                self,
+                "Brak połączenia",
+                "Utracono połączenie z serwerem.\n"
+                "Aplikacja będzie działać w trybie offline i będzie korzystać z zapisanych danych lokalnych."
+            )
+
+    def center(self):
+        # Get screen geometry
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+
+        # Get the size of the window
+        window_geometry = self.frameGeometry()
+
+        # Center point of the screen
+        center_point = screen_geometry.center()
+
+        # Move the rectangle's center to the screen center
+        window_geometry.moveCenter(center_point)
+
+        # Move the top-left of the window to match the centered rect
+        self.move(window_geometry.topLeft())
+
+
     @Slot()
     def on_map_loaded(self):
         self.setup_markers()
+        self.center()
+
 
     @Slot(FilterState)
     def on_filter_changed(self,state: FilterState):

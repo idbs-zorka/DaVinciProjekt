@@ -9,13 +9,14 @@ class APIError(IOError):
     - możliwe rozwiązanie (`solution`).
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(args, kwargs)
-
-        self.code = kwargs["code"]
-        self.reason = kwargs["reason"]
-        self.result = kwargs["result"]
-        self.solution = kwargs["solution"]
+    def __init__(self, code,reason,result,solution):
+        self.code = code
+        self.reason = reason
+        self.result = result
+        self.solution = solution
 
     def __str__(self):
         return f"API Error [{self.code}]: {self.reason} {self.result} {self.solution}"
+
+class TooManyRequests(IOError):
+    pass
