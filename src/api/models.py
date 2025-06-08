@@ -1,3 +1,7 @@
+"""
+Objekty przechowujące dane z API
+"""
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -21,12 +25,6 @@ class StationMeta:
     launch_date: datetime
     close_date: datetime | None
     type: str
-
-@dataclass
-class SensorMeta:
-    codename: str
-    avg_time: str
-    measure_type: str
 
 @dataclass
 class IndexCategory:

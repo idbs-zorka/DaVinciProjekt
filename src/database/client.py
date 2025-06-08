@@ -1,79 +1,73 @@
-import os.path
-import typing
-from copy import copy
-from datetime import datetime
+import os
 import sqlite3
+from datetime import datetime
 from enum import Enum
-from src.api.client import Client as APIClient
-import src.api.models as APIModels
-import src.database.views as views
-from src.api.models import IndexCategory
-import src.config as config
+from typing import Iterable, List, Optional
 
-# Dodatkowa stała której nie ma w opowiedzi z API a którą wykorzystujemy
+import src.api.models as api_models
+import src.config as config
+import src.database.views as views
+
+
 OVERALL_SENSOR_TYPE_CODENAME: str = "Ogólny"
+
 
 class Client:
     """
-    Klient bazy danych SQLite odpowiedzialny za:
-      - inicjalizację i migrację schematu,
-      - przechowywanie i aktualizację danych o stacjach oraz wskaźnikach jakości powietrza,
-      - odczyt widoków z tabel.
+    Klient SQLite do:
+      - inicjalizacji i migracji schematu,
+      - przechowywania/aktualizacji danych o stacjach i sensorach,
+      - odczytu widoków zdefiniowanych w src.database.views.
     """
 
-
-    # Tworzymy enumerator
     class GlobalUpdateIds(Enum):
-        """
-        Identyfikatory rekordów w tabeli `global_update` służące
-        do śledzenia momentów ostatniej globalnej aktualizacji.
-        """
+        """Identyfikatory typów globalnych aktualizacji."""
         STATION_LIST = 0
 
     def __init__(self, database_filepath: str):
         """
-        Inicjalizuje połączenie z bazą danych i tworzy niezbędne tabele.
+        Inicjalizuje połączenie i ewentualnie wypełnia bazę.
 
         Args:
-            database_filepath (str): Ścieżka do pliku SQLite.
+            database_filepath: ścieżka do pliku SQLite.
         """
-
-        needs_populate = (os.path.exists(database_filepath) == False)
-
-        self.filepath = database_filepath
-        self.__conn = sqlite3.connect(database_filepath)
-
-        self.__conn.row_factory = sqlite3.Row # Możliwość odwołania się do kolumn bazy
-        self.__cursor = self.__conn.cursor()
+        needs_populate = not os.path.exists(database_filepath)
+        self._filepath = database_filepath
+        self._conn = sqlite3.connect(database_filepath)
+        self._conn.row_factory = sqlite3.Row
+        self._cursor = self._conn.cursor()
 
         if needs_populate:
-            self.__populate_tables()  # Tworzy struktury bazy i wypełnia stałymi elementami
+            self._populate_tables()
 
-    def duplicate_connection(self):
-        return Client(self.filepath)
+    def __del__(self):
+        """Zamyka kursor i połączenie przy usunięciu instancji."""
+        try:
+            self._cursor.close()
+            self._conn.close()
+        except Exception:
+            pass
 
+    def duplicate_connection(self) -> 'Client':
+        """Zwraca nową instancję Client na tym samym pliku bazy."""
+        return Client(self._filepath)
 
-    def __populate_tables(self):
-        """
-        Tworzy w bazie wszystkie potrzebne tabele i triggery,
-        jeżeli jeszcze nie istnieją, oraz inicjalizuje podstawowe wartości.
-        """
-        # Tabela globalnych znaczników ostatniej aktualizacji
-        self.__cursor.execute("""
+    def _populate_tables(self) -> None:
+        """Tworzy wszystkie tabele, triggery i dane początkowe."""
+        # global_update
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS global_update (
                 id INTEGER PRIMARY KEY,
-                last_update_at TIMESTAMP NOT NULL DEFAULT 0
+                last_update_at INTEGER NOT NULL DEFAULT 0
             )
         """)
+        self._cursor.executemany(
+            "INSERT OR IGNORE INTO global_update (id) VALUES (?)",
+            [(member.value,) for member in self.GlobalUpdateIds]
+        )
 
-        # Wstawienie brakującego identyfikatora lub przyszłościowych identyfikatorów
-        self.__cursor.executemany("""
-            INSERT OR IGNORE INTO global_update (id)
-                VALUES (?)
-        """, [(member.value,) for member in self.GlobalUpdateIds])
-
-        # Tabele stacji i powiązanych miast
-        self.__cursor.execute("""
+        # city, station, station_update
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS city (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 district TEXT NOT NULL,
@@ -81,8 +75,7 @@ class Client:
                 city TEXT NOT NULL UNIQUE
             )
         """)
-        # Tabelka z podstawowymi parametrami stacji
-        self.__cursor.execute("""
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS station (
                 id INTEGER PRIMARY KEY,
                 codename TEXT UNIQUE NOT NULL,
@@ -91,202 +84,163 @@ class Client:
                 address TEXT,
                 latitude REAL NOT NULL,
                 longitude REAL NOT NULL,
-                FOREIGN KEY (city_id) REFERENCES city(id)
+                FOREIGN KEY(city_id) REFERENCES city(id)
             )
         """)
-
-        # Tabela ostatnich czasow atualizacji sensorów, indeksów, metadanych dla poszczególnych stacji
-        self.__cursor.execute("""
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS station_update (
                 station_id INTEGER UNIQUE,
-                last_sensors_update_at TIMESTAMP NOT NULL DEFAULT 0,
-                last_indexes_update_at TIMESTAMP NOT NULL DEFAULT 0,
-                last_meta_update_at TIMESTAMP NOT NULL DEFAULT 0,
-                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE
+                last_sensors_update_at INTEGER NOT NULL DEFAULT 0,
+                last_indexes_update_at INTEGER NOT NULL DEFAULT 0,
+                last_meta_update_at INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(station_id) REFERENCES station(id)
+                    ON UPDATE CASCADE
             )
         """)
+        # triggery dla station
+        for evt in ("INSERT", "UPDATE"):
+            self._cursor.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS tgr_on_{evt.lower()}_station
+                AFTER {evt} ON station
+                BEGIN
+                    UPDATE global_update
+                    SET last_update_at = unixepoch('now')
+                    WHERE id = {self.GlobalUpdateIds.STATION_LIST.value};
+                END
+            """)
 
-        # Triggery aktualizujące global_update przy zmianach w station.
-        # unixepoch - odpowiedni format czasu
-        # GlobalUpdateIds.STATION_LIST.value - stala o wartosci zero
-        self.__cursor.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_insert_station
-            AFTER INSERT ON station
-            BEGIN
-                UPDATE global_update
-                SET last_update_at = unixepoch('now')
-                WHERE id = {self.GlobalUpdateIds.STATION_LIST.value};
-            END
-        """)
-        self.__cursor.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_update_station
-            AFTER UPDATE ON station
-            BEGIN
-                UPDATE global_update
-                SET last_update_at = unixepoch('now')
-                WHERE id = {self.GlobalUpdateIds.STATION_LIST.value};
-            END
-        """)
-
-        # Tabela metadanych stacji i triggery do ich śledzenia
-        self.__cursor.execute("""
+        # station_meta + triggery
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS station_meta (
                 station_id INTEGER NOT NULL,
                 international_codename TEXT NOT NULL,
-                launch_date DATE,
-                shutdown_date DATE,
+                launch_date TEXT,
+                shutdown_date TEXT,
                 type TEXT,
-                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE
+                FOREIGN KEY(station_id) REFERENCES station(id)
+                    ON UPDATE CASCADE
             )
         """)
-        self.__cursor.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_insert_station_meta
-            AFTER INSERT ON station_meta
-            FOR EACH ROW
-            BEGIN
-                INSERT OR REPLACE INTO station_update
-                (station_id, last_meta_update_at)
-                VALUES (NEW.station_id, unixepoch('now'));
-            END
-        """)
-        self.__cursor.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_update_station_meta
-            AFTER UPDATE ON station_meta
-            FOR EACH ROW
-            BEGIN
-                INSERT OR REPLACE INTO station_update
-                (station_id, last_meta_update_at)
-                VALUES (NEW.station_id, unixepoch('now'));
-            END
-        """)
+        for evt in ("INSERT", "UPDATE"):
+            self._cursor.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS tgr_on_{evt.lower()}_station_meta
+                AFTER {evt} ON station_meta
+                FOR EACH ROW
+                BEGIN
+                    INSERT OR REPLACE INTO station_update
+                    (station_id, last_meta_update_at)
+                    VALUES (NEW.station_id, unixepoch('now'));
+                END
+            """)
 
-        # Kategorie indeksów i nazwy sensorów pod wzgledem jakosciowym
-        self.__cursor.execute("""
+        # kategorie indeksów
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS aq_index_category_name (
                 value INTEGER PRIMARY KEY,
                 name TEXT NOT NULL
             )
         """)
+        self._cursor.executemany(
+            "INSERT OR IGNORE INTO aq_index_category_name (value, name) VALUES (?, ?)",
+            ((v, n) for v, n in config.AQ_INDEX_CATEGORIES.items())
+        )
 
-        # Wypełnienie domyślnych nazwy kategorii indeksów
-        self.__cursor.executemany("""
-            INSERT OR IGNORE INTO aq_index_category_name (value, name)
-            VALUES (?, ?)
-        """, ((idx, val) for idx, val in config.AQ_INDEX_CATEGORIES.items()))
-
-        self.__cursor.execute("""
+        # typy sensorów
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS sensor_type (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 codename TEXT NOT NULL UNIQUE
             )
         """)
-        # Wypełnienie domyślnych typów sensorów
-        self.__cursor.executemany("""
-            INSERT OR IGNORE INTO sensor_type (codename)
-            VALUES (?)
-        """, ((t,) for t in config.AQ_TYPES))
+        self._cursor.executemany(
+            "INSERT OR IGNORE INTO sensor_type (codename) VALUES (?)",
+            ((t,) for t in config.AQ_TYPES)
+        )
 
-
-        # Tabela przechowująca indeksy (wartosci) jakości powietrza dla sensorow wysteoujacych w danych stacjach
-        self.__cursor.execute("""
+        # aq_index + triggery
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS aq_index (
-                station_id INT,
-                sensor_type_id INT,
-                value INT,
-                record_date DATETIME,
-                PRIMARY KEY (station_id,sensor_type_id),
-                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE,
-                FOREIGN KEY (sensor_type_id) REFERENCES sensor_type(id),
-                FOREIGN KEY (value) REFERENCES aq_index_category_name(value)
+                station_id INTEGER,
+                sensor_type_id INTEGER,
+                value INTEGER,
+                record_date TEXT,
+                PRIMARY KEY(station_id, sensor_type_id),
+                FOREIGN KEY(station_id) REFERENCES station(id)
+                    ON UPDATE CASCADE,
+                FOREIGN KEY(sensor_type_id) REFERENCES sensor_type(id),
+                FOREIGN KEY(value) REFERENCES aq_index_category_name(value)
             )
         """)
-        self.__cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_insert_aq_index
-            AFTER INSERT ON aq_index
-            FOR EACH ROW
-            BEGIN
-                INSERT INTO station_update(station_id, last_indexes_update_at)
-                VALUES (NEW.station_id, unixepoch('now'))
-                ON CONFLICT(station_id) DO UPDATE
-                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
-            END
-        """)
-        self.__cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_update_aq_index
-            AFTER UPDATE ON aq_index
-            FOR EACH ROW
-            BEGIN
-                INSERT INTO station_update(station_id, last_indexes_update_at)
-                VALUES (NEW.station_id, unixepoch('now'))
-                ON CONFLICT(station_id) DO UPDATE
-                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
-            END
-        """)
+        for evt in ("INSERT", "UPDATE"):
+            self._cursor.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS tgr_on_{evt.lower()}_aq_index
+                AFTER {evt} ON aq_index
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO station_update
+                      (station_id, last_indexes_update_at)
+                    VALUES
+                      (NEW.station_id, unixepoch('now'))
+                    ON CONFLICT(station_id) DO UPDATE
+                      SET last_indexes_update_at =
+                        EXCLUDED.last_indexes_update_at;
+                END
+            """)
 
-        self.__cursor.execute("""
+        # sensor + triggery
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS sensor (
                 id INTEGER PRIMARY KEY,
                 station_id INTEGER,
                 sensor_type_id INTEGER,
-                FOREIGN KEY (station_id) REFERENCES station(id) ON UPDATE CASCADE,
-                FOREIGN KEY (sensor_type_id) REFERENCES sensor_type(id)
+                FOREIGN KEY(station_id) REFERENCES station(id)
+                    ON UPDATE CASCADE,
+                FOREIGN KEY(sensor_type_id) REFERENCES sensor_type(id)
             )
         """)
+        for evt in ("INSERT", "UPDATE"):
+            self._cursor.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS tgr_on_{evt.lower()}_sensor
+                AFTER {evt} ON sensor
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO station_update
+                      (station_id, last_sensors_update_at)
+                    VALUES
+                      (NEW.station_id, unixepoch('now'))
+                    ON CONFLICT(station_id) DO UPDATE
+                      SET last_sensors_update_at =
+                        EXCLUDED.last_sensors_update_at;
+                END
+            """)
 
-        self.__cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_insert_sensor
-            AFTER INSERT ON sensor
-            FOR EACH ROW
-            BEGIN
-                INSERT INTO station_update(station_id, last_sensors_update_at)
-                VALUES (NEW.station_id, unixepoch('now'))
-                ON CONFLICT(station_id) DO UPDATE
-                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
-            END
-        """)
-        self.__cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS tgr_on_update_sensor
-            AFTER UPDATE ON sensor
-            FOR EACH ROW
-            BEGIN
-                INSERT INTO station_update(station_id, last_sensors_update_at)
-                VALUES (NEW.station_id, unixepoch('now'))
-                ON CONFLICT(station_id) DO UPDATE
-                  SET last_indexes_update_at = EXCLUDED.last_indexes_update_at;
-            END
-        """)
-
-        self.__cursor.execute("""
+        # sensor_data
+        self._cursor.execute("""
             CREATE TABLE IF NOT EXISTS sensor_data (
                 sensor_id INTEGER NOT NULL,
-                date DATE NOT NULL,
+                date TEXT NOT NULL,
                 value REAL NOT NULL,
-                PRIMARY KEY(sensor_id,date),
-                FOREIGN KEY (sensor_id) REFERENCES sensor(id)
+                PRIMARY KEY(sensor_id, date),
+                FOREIGN KEY(sensor_id) REFERENCES sensor(id)
             )
         """)
-        self.__conn.commit()
+        self._conn.commit()
 
-    def update_stations(self, stations: typing.Iterable[APIModels.Station]):
+    def update_stations(self, stations: Iterable[api_models.Station]) -> None:
         """
-        Zapisuje lub uaktualnia listę stacji wraz z informacjami o mieście.
+        Wstawia lub aktualizuje liste stacji i odpowiadające miasta.
 
         Args:
-            stations (Iterable[api.models.Station]): Kolekcja obiektów Station
-                pobranych z API.
+            stations: iterable obiektów Station z API.
         """
-
-        # Wstawianie/ignorowanie miast
-        city_params = (
-            (s.district, s.voivodeship, s.city)
-            for s in stations
+        # dodaj/ignoruj miasta
+        city_params = ((s.district, s.voivodeship, s.city)
+                       for s in stations)
+        self._cursor.executemany(
+            "INSERT OR IGNORE INTO city (district, voivodeship, city) VALUES (?, ?, ?)",
+            city_params
         )
-        self.__cursor.executemany("""
-            INSERT OR IGNORE INTO city (district, voivodeship, city)
-            VALUES (?, ?, ?)
-        """, city_params)
-
-        # Wstawianie/aktualizacja stacji
+        # dodaj/aktualizuj stacje
         station_params = [
             {
                 "id": s.id,
@@ -296,344 +250,355 @@ class Client:
                 "latitude": s.latitude,
                 "longitude": s.longitude,
                 "city": s.city
-            } for s in stations
+            }
+            for s in stations
         ]
-        self.__cursor.executemany("""
+        self._cursor.executemany(
+            """
             INSERT OR REPLACE INTO station
-            (id, codename, name, city_id, address, latitude, longitude)
+              (id, codename, name, city_id, address, latitude, longitude)
             SELECT
               :id, :codename, :name, city.id, :address, :latitude, :longitude
             FROM city WHERE city.city = :city
-        """, station_params)
-        self.__conn.commit()
+            """,
+            station_params
+        )
+        self._conn.commit()
 
     def get_last_stations_update(self) -> datetime:
-        """
-        Pobiera czas ostatniej globalnej aktualizacji listy stacji.
-
-        Returns:
-            datetime: Data i godzina ostatniej aktualizacji.
-        """
-        qry = self.__cursor.execute(
+        """Zwraca czas ostatniej aktualizacji listy stacji."""
+        row = self._cursor.execute(
             "SELECT last_update_at FROM global_update WHERE id = ?",
-            [self.GlobalUpdateIds.STATION_LIST.value]
+            (self.GlobalUpdateIds.STATION_LIST.value,)
         ).fetchone()
-        return datetime.fromtimestamp(qry["last_update_at"])
+        return datetime.fromtimestamp(row["last_update_at"])
 
-    def get_station_list_view(self) -> list[views.StationListView]:
-        """
-        Zwraca zrekonstruowany widok listy stacji.
-
-        Returns:
-            list[views.StationListView]: Lista widoków stacji z podstawowymi danymi.
-        """
-        qry = self.__cursor.execute("""
+    def get_station_list_view(self) -> List[views.StationListView]:
+        """Zwraca listę stacji (id, nazwa, współrzędne, miasto)."""
+        rows = self._cursor.execute("""
             SELECT s.id, s.name, s.latitude, s.longitude, c.city
             FROM station AS s
             JOIN city AS c ON c.id = s.city_id
         """).fetchall()
         return [
             views.StationListView(
-                id=row["id"],
-                name=row["name"],
-                latitude=row["latitude"],
-                longitude=row["longitude"],
-                city=row["city"]
-            ) for row in qry
+                id=r["id"],
+                name=r["name"],
+                latitude=r["latitude"],
+                longitude=r["longitude"],
+                city=r["city"]
+            ) for r in rows
         ]
 
-    def update_station_meta(self, meta: list[APIModels.StationMeta]):
+    def update_station_meta(self, meta: List[api_models.StationMeta]) -> None:
         """
-        Zapisuje lub uaktualnia metadane stacji (międzynarodowy kod, daty, typ).
+        Wstawia lub aktualizuje metadane stacji.
 
         Args:
-            meta (list[api.models.StationMeta]): Lista obiektów meta pobranych z API.
+            meta: lista obiektów StationMeta z API.
         """
         params = (
             {
-                "codename": m.codename,
+                "station_id": m.codename,
                 "international": m.international_codename,
                 "launch_date": m.launch_date.isoformat(),
                 "shutdown_date": m.close_date.isoformat(),
                 "type": m.type
             } for m in meta
         )
-        self.__cursor.executemany("""
+        self._cursor.executemany(
+            """
             INSERT OR REPLACE INTO station_meta
-            (station_id, international_codename, launch_date, shutdown_date, type)
+              (station_id, international_codename, launch_date, shutdown_date, type)
             VALUES (?, ?, ?, ?, ?)
-        """, params)
-        self.__conn.commit()
+            """,
+            [(p["station_id"], p["international"], p["launch_date"],
+              p["shutdown_date"], p["type"]) for p in params]
+        )
+        self._conn.commit()
 
     def fetch_last_station_meta_update(self, station_id: int) -> datetime:
         """
-        Pobiera czas ostatniej aktualizacji metadanych danej stacji.
+        Zwraca datetime ostatniej aktualizacji metadanych stacji.
 
         Args:
-            station_id (int): Identyfikator stacji.
-
-        Returns:
-            datetime: Data i godzina ostatniej aktualizacji metadanych.
+            station_id: id stacji.
         """
-        qry = self.__cursor.execute("""
-            SELECT last_meta_update_at
-            FROM station_update
-            WHERE station_id = ?
+        row = self._cursor.execute(
+            "SELECT last_meta_update_at FROM station_update WHERE station_id = ?",
+            (station_id,)
+        ).fetchone()
+        return datetime.fromtimestamp(row["last_meta_update_at"])
+
+    def fetch_station_detail_view(
+        self, station_id: int
+    ) -> views.StationDetailsView:
+        """
+        Zwraca szczegóły wybranej stacji.
+
+        Args:
+            station_id: id stacji.
+        """
+        r = self._cursor.execute("""
+            SELECT s.codename, s.name, c.district, c.voivodeship,
+                   c.city, s.address
+            FROM station AS s
+            JOIN city AS c ON s.city_id = c.id
+            WHERE s.id = ?
         """, (station_id,)).fetchone()
-        return datetime.fromtimestamp(qry["last_meta_update_at"])
-
-    def fetch_station_detail_view(self,station_id: int) -> views.StationDetailsView:
-        """
-
-        """
-
-        qry = self.__cursor.execute("""
-            SELECT station.codename, station.name, city.district, city.voivodeship, city.city, station.address
-            FROM station
-            JOIN city
-                ON station.city_id = city.id
-            WHERE station.id = ?
-        """,(station_id,)).fetchone()
-
         return views.StationDetailsView(
             id=station_id,
-            codename=qry['codename'],
-            name=qry['name'],
-            district=qry['district'],
-            voivodeship=qry['voivodeship'],
-            city=qry['city'],
-            address=qry['address']
+            codename=r["codename"],
+            name=r["name"],
+            district=r["district"],
+            voivodeship=r["voivodeship"],
+            city=r["city"],
+            address=r["address"]
         )
 
-    def update_sensor_types(self, types: list[str]):
+    def update_sensor_types(self, types: List[str]) -> None:
         """
-        Dodaje nowe typy sensorów do słownika `sensor_type`.
+        Dodaje typy sensorów.
 
         Args:
-            types (list[str]): Lista kodowych nazw typów sensorów.
+            types: lista kodów sensorów.
         """
         params = ((t,) for t in types)
-        self.__cursor.executemany(
+        self._cursor.executemany(
             "INSERT OR IGNORE INTO sensor_type (codename) VALUES (?)",
             params
         )
-        self.__conn.commit()
+        self._conn.commit()
 
     def update_station_air_quality_indexes(
-        self,
-        station_id: int,
-        indexes: APIModels.AirQualityIndexes
-    ):
+        self, station_id: int, indexes: api_models.AirQualityIndexes
+    ) -> None:
         """
-        Zapisuje lub uaktualnia wartości indeksów jakości powietrza dla stacji.
+        Wstawia lub aktualizuje indeksy jakości powietrza.
 
         Args:
-            station_id (int): Identyfikator stacji.
-            indexes (api.models.AirQualityIndexes): Obiekt zawierający
-                ogólny indeks oraz indeksy poszczególnych sensorów.
+            station_id: id stacji.
+            indexes: obiekt z indeksem ogólnym i cząstkowym.
         """
-        # Laczenie w jedna tabele indeksu ogolnego 'ogólny' z reszta indeksow odczytanych
-        all_indexes = (
-            (OVERALL_SENSOR_TYPE_CODENAME, indexes.overall),
-            *indexes.sensors.items()
-        )
+        all_idxs = ((OVERALL_SENSOR_TYPE_CODENAME, indexes.overall),
+                    *indexes.sensors.items())
         params = (
             {
                 "station_id": station_id,
+                "codename": key,
                 "value": idx.value,
-                "sensor_codename": key,
-                "date": idx.date.isoformat() if (idx.date is not None) else None
-            }
-            for key, idx in all_indexes
+                "date": (idx.date.isoformat()
+                         if idx.date else None)
+            } for key, idx in all_idxs
         )
-        self.__cursor.executemany("""
-            INSERT INTO aq_index (
-                station_id,
-                sensor_type_id,
-                value,
-                record_date
-            )
-            VALUES (
+        self._cursor.executemany(
+            """
+            INSERT INTO aq_index
+              (station_id, sensor_type_id, value, record_date)
+            VALUES
+              (
                 :station_id,
-                (SELECT id FROM sensor_type WHERE codename = :sensor_codename),
+                (SELECT id FROM sensor_type WHERE codename = :codename),
                 :value,
                 :date
-            )
-            ON CONFLICT(station_id,sensor_type_id) DO UPDATE
-                SET
-                    value=EXCLUDED.value,
-                    record_date=EXCLUDED.record_date
-        """, params)
-        self.__conn.commit()
+              )
+            ON CONFLICT(station_id, sensor_type_id) DO UPDATE
+              SET value = EXCLUDED.value,
+                  record_date = EXCLUDED.record_date
+            """,
+            params
+        )
+        self._conn.commit()
 
-    def fetch_last_station_air_quality_indexes_update(self, station_id: int) -> datetime:
+    def fetch_last_station_air_quality_indexes_update(
+        self, station_id: int
+    ) -> datetime:
         """
-        Pobiera czas ostatniej aktualizacji indeksów jakości powietrza dla stacji.
+        Zwraca datetime ostatniej aktualizacji indeksów jakości powietrza.
 
         Args:
-            station_id (int): Identyfikator stacji.
-
-        Returns:
-            datetime: Data i godzina ostatniej aktualizacji indeksów,
-                lub epoch (1970-01-01) jeśli brak wpisu.
+            station_id: id stacji.
         """
-        qry = self.__cursor.execute("""
-            SELECT last_indexes_update_at
-            FROM station_update
-            WHERE station_id = ?
-        """, (station_id,)).fetchone()
-        if qry is not None:
-            return datetime.fromtimestamp(qry["last_indexes_update_at"])
+        row = self._cursor.execute(
+            "SELECT last_indexes_update_at FROM station_update "
+            "WHERE station_id = ?",
+            (station_id,)
+        ).fetchone()
+        return (datetime.fromtimestamp(row["last_indexes_update_at"])
+                if row else datetime.fromtimestamp(0))
 
-        return datetime.fromtimestamp(0)
-
-    def fetch_station_air_quality_index_value(self, station_id: int, type_codename: str) -> int | None:
+    def fetch_station_air_quality_index_value(
+        self, station_id: int, type_codename: str
+    ) -> Optional[int]:
         """
-        Zwraca wartość indeksu jakości powietrza dla podanej stacji i typu sensora.
+        Zwraca wartość indeksu dla danego sensora.
 
         Args:
-            station_id (int): Identyfikator stacji.
-            type_codename (str): Codename sensora (np. "pm10", "so2" itp.).
-
-        Returns:
-            int | None: Wartość indeksu, lub None jeśli brak danych.
+            station_id: id stacji.
+            type_codename: kod sensora.
         """
-        row = self.__cursor.execute("""
-            SELECT
-                aq.value AS value
+        row = self._cursor.execute("""
+            SELECT aq.value
             FROM aq_index AS aq
             JOIN sensor_type AS st
-                 ON aq.sensor_type_id = st.id
-            WHERE aq.station_id = :station_id
-              AND st.codename   = :type
-        """, {
-            "station_id": station_id,
-            "type": type_codename
-        }).fetchone()
+              ON aq.sensor_type_id = st.id
+            WHERE aq.station_id = :sid
+              AND st.codename = :cod
+        """, {"sid": station_id, "cod": type_codename}).fetchone()
+        return row["value"] if row else None
 
-        # Jeżeli nie ma żadnego wiersza, fetchone() zwróci None
-        if row is None:
-            return None
+    def update_station_sensors(
+        self, station_id: int, sensors: List[api_models.Sensor]
+    ) -> None:
+        """
+        Wstawia nowe sensory do stacji.
 
-        # W przeciwnym razie zwracamy wartość
-        return row['value']
-
-
-    def update_station_sensors(self,station_id: int,sensors: list[APIModels.Sensor]):
-        self.update_sensor_types([s.codename for  s in sensors])
-
+        Args:
+            station_id: id stacji.
+            sensors: lista obiektów Sensor.
+        """
+        self.update_sensor_types([s.codename for s in sensors])
         params = (
             {
                 "id": s.id,
                 "station_id": station_id,
-                "sensor_type_codename": s.codename
-            }
-            for s in sensors
+                "codename": s.codename
+            } for s in sensors
         )
-
-        self.__cursor.executemany("""
-            INSERT OR IGNORE INTO sensor (id, station_id, sensor_type_id)
-            VALUES (
+        self._cursor.executemany(
+            """
+            INSERT OR IGNORE INTO sensor
+              (id, station_id, sensor_type_id)
+            VALUES
+              (
                 :id,
                 :station_id,
-                (SELECT id FROM sensor_type WHERE codename = :sensor_type_codename)
-            )
-        """, params)
+                (SELECT id FROM sensor_type WHERE codename = :codename)
+              )
+            """,
+            params
+        )
+        self._conn.commit()
 
-        self.__conn.commit()
+    def fetch_last_station_sensors_update(
+        self, station_id: int
+    ) -> datetime:
+        """
+        Zwraca datetime ostatniej aktualizacji sensorów.
 
-    def fetch_last_station_sensors_update(self,station_id: int) -> datetime:
-        qry = self.__cursor.execute("""
-            SELECT last_sensors_update_at
-            FROM station_update
-            WHERE station_id = ?
-        """, (station_id,)).fetchone()
-        if qry is not None:
-            return datetime.fromtimestamp(qry["last_sensors_update_at"])
+        Args:
+            station_id: id stacji.
+        """
+        row = self._cursor.execute(
+            "SELECT last_sensors_update_at FROM station_update "
+            "WHERE station_id = ?",
+            (station_id,)
+        ).fetchone()
+        return (datetime.fromtimestamp(row["last_sensors_update_at"])
+                if row else datetime.fromtimestamp(0))
 
-        return datetime.fromtimestamp(0)
+    def fetch_station_sensors(
+        self, station_id: int
+    ) -> List[views.SensorView]:
+        """
+        Zwraca listę sensorów z kodami.
 
-    def fetch_station_sensors(self,station_id: int) -> list[views.SensorView]:
-        qry = self.__cursor.execute("""
-            SELECT sensor.id, sensor_type.codename 
-            FROM sensor
-            JOIN sensor_type
-                ON sensor_type.id = sensor.sensor_type_id
-            WHERE sensor.station_id = ?
-        """,[station_id]).fetchall()
-
+        Args:
+            station_id: id stacji.
+        """
+        rows = self._cursor.execute("""
+            SELECT s.id, st.codename
+            FROM sensor AS s
+            JOIN sensor_type AS st ON s.sensor_type_id = st.id
+            WHERE s.station_id = ?
+        """, (station_id,)).fetchall()
         return [
-            views.SensorView(
-                id=entry['id'],
-                codename=entry['codename']
-            )
-            for entry in qry
+            views.SensorView(id=r["id"], codename=r["codename"])
+            for r in rows
         ]
 
-    def fetch_station_details(self,station_id: int) -> views.StationDetailsView:
-        qry = self.__cursor.execute("""
-            SELECT station.codename,station.name,city.district,city.voivodeship,city.city,station.address
-            FROM station
-            JOIN city
-                ON station.city_id = city.id
-            WHERE station.id = ?
-        """,[station_id]).fetchone()
+    def update_sensor_data(
+        self, sensor_id: int, data: List[api_models.SensorData]
+    ) -> None:
+        """
+        Wstawia lub aktualizuje pomiary z sensora.
 
-        return views.StationDetailsView(
-            id=station_id,
-            codename=qry['codename'],
-            name=qry['name'],
-            district=qry['district'],
-            voivodeship=qry['voivodeship'],
-            city=qry['city'],
-            address=qry['address']
-        )
+        Args:
+            sensor_id: id sensora.
+            data: lista obiektów SensorData.
+        """
+        params = [
+            (sensor_id, entry.date.isoformat(), entry.value)
+            for entry in data
+        ]
+        self._cursor.executemany("""
+            INSERT INTO sensor_data (sensor_id, date, value)
+            VALUES (?, ?, ?)
+            ON CONFLICT(sensor_id, date) DO UPDATE
+              SET value = EXCLUDED.value
+        """, params)
+        self._conn.commit()
 
-    def update_sensor_data(self, sensor_id: int, data: list[APIModels.SensorData]):
-        self.__cursor.executemany("""
-            INSERT INTO sensor_data (sensor_id,date,value)
-            VALUES
-            (?,?,?)
-            ON CONFLICT(sensor_id,date) DO UPDATE
-                SET value=EXCLUDED.value
-        """, [(sensor_id,entry.date.isoformat(),entry.value) for entry in data])
-        self.__conn.commit()
+    def fetch_latest_sensor_record_date(
+        self, sensor_id: int
+    ) -> Optional[datetime]:
+        """
+        Zwraca datetime najnowszego rekordu sensora.
 
-    def fetch_latest_sensor_record_date(self,sensor_id: int) -> datetime | None:
-        qry = self.__cursor.execute("""
-            SELECT MAX(date) AS date FROM sensor_data
+        Args:
+            sensor_id: id sensora.
+        """
+        row = self._cursor.execute("""
+            SELECT MAX(date) AS dt FROM sensor_data
             WHERE sensor_id = ?
-        """,[sensor_id]).fetchone()
+        """, (sensor_id,)).fetchone()
+        return (datetime.fromisoformat(row["dt"])
+                if row and row["dt"] else None)
 
-        if qry['date'] is None:
-            return None
+    def fetch_oldest_sensor_record_date(
+        self, sensor_id: int
+    ) -> Optional[datetime]:
+        """
+        Zwraca datetime najstarszego rekordu sensora.
 
-        return datetime.fromisoformat(qry['date'])
-
-    def fetch_oldest_sensor_record_date(self,sensor_id: int) -> datetime | None:
-        qry = self.__cursor.execute("""
-            SELECT MIN(date) AS date FROM sensor_data
+        Args:
+            sensor_id: id sensora.
+        """
+        row = self._cursor.execute("""
+            SELECT MIN(date) AS dt FROM sensor_data
             WHERE sensor_id = ?
-        """,[sensor_id]).fetchone()
+        """, (sensor_id,)).fetchone()
+        return (datetime.fromisoformat(row["dt"])
+                if row and row["dt"] else None)
 
-        if qry['date'] is None:
-            return None
+    def fetch_sensor_data(
+        self,
+        sensor_id: int,
+        date_from: datetime,
+        date_to: datetime = datetime.now()
+    ) -> List[views.SensorValueView]:
+        """
+        Zwraca pomiary sensora z zakresu dat.
 
-        return datetime.fromisoformat(qry['date'])
-
-    def fetch_sensor_data(self,sensor_id: int, date_from: datetime, date_to: datetime = datetime.now()) -> list[views.SensorValueView]:
-        qry = self.__cursor.execute("""
-            SELECT date,value FROM sensor_data
-            WHERE sensor_id = :sensor_id AND date >= :date_from AND date <= :date_to
-        """,{
-            "sensor_id": sensor_id,
-            "date_from": date_from.isoformat(),
-            "date_to": date_to.isoformat()
+        Args:
+            sensor_id: id sensora.
+            date_from: początek zakresu.
+            date_to: koniec zakresu (domyślnie teraz).
+        """
+        rows = self._cursor.execute("""
+            SELECT date, value FROM sensor_data
+            WHERE sensor_id = :sid
+              AND date >= :dfrom
+              AND date <= :dto
+        """, {
+            "sid": sensor_id,
+            "dfrom": date_from.isoformat(),
+            "dto": date_to.isoformat()
         }).fetchall()
-
         return [
             views.SensorValueView(
-                date=datetime.fromisoformat(entry['date']),
-                value=entry['value']
-            ) for entry in qry
+                date=datetime.fromisoformat(r["date"]),
+                value=r["value"]
+            ) for r in rows
         ]
+

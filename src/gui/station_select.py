@@ -68,12 +68,7 @@ class StationIndexFetcher(QRunnable):
         self.repository = repository
         self.signals = self.Signals()
 
-    def __del__(self):
-        logging.info(f"Fetcher deleted: station_id:  {self.station_id}, index_type: {self.index_type}")
-
-
     def run(self):
-        logging.info(f"Fetcher started: station_id:  {self.station_id}, index_type: {self.index_type}")
         own_repository = self.repository.clone()
         value = own_repository.fetch_station_air_quality_index_value(self.station_id,self.index_type)
 
@@ -81,7 +76,6 @@ class StationIndexFetcher(QRunnable):
              value = -1
 
         self.signals.finished.emit(self.station_id,value)
-        logging.info(f"Fetcher finished: station_id:  {self.station_id}, index_type: {self.index_type}")
 
 
 class StationSelectWidget(QMainWindow):

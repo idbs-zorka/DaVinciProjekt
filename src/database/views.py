@@ -1,3 +1,8 @@
+"""
+Objekty przechowujące dane z bazy danych
+"""
+
+
 from datetime import datetime
 from dataclasses import dataclass
 

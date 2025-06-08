@@ -19,4 +19,7 @@ class APIError(IOError):
         return f"API Error [{self.code}]: {self.reason} {self.result} {self.solution}"
 
 class TooManyRequests(IOError):
+    """
+    Wyjątek reprezentujący błąd API GIOŚ zbyt wielu żadań
+    """
     pass

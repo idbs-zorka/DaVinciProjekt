@@ -4,11 +4,11 @@ from typing import Any
 import numpy as np
 from PySide6.QtCharts import QChart, QChartView, QValueAxis, QDateTimeAxis, QSplineSeries, QScatterSeries
 from PySide6.QtCore import QDateTime, Slot, QSize, QPointF, QThreadPool, QRunnable, Signal, QObject
-from PySide6.QtGui import Qt, QPainter, QFont, QPixmap, QColorConstants, QCursor
+from PySide6.QtGui import Qt, QPainter, QFont, QColorConstants, QCursor
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QTabWidget, QFormLayout, QComboBox, QDateTimeEdit, \
     QVBoxLayout, QPushButton, QMessageBox, QGroupBox, QGridLayout, QToolTip
 
-from src.api.exceptions import APIError, TooManyRequests
+from src.api.exceptions import TooManyRequests
 from src.database.views import StationDetailsView, SensorView, SensorValueView
 from src.gui.loading_overlay import LoadingOverlay
 from src.gui.qt import qt_to_datetime
@@ -65,12 +65,92 @@ class StationDataWidget(QWidget):
         self.setMinimumSize(QSize(700,500))
         self.repository = repository
         self.station_id = station_id
-        self.sensors = self.repository.fetch_station_sensors(self.station_id)
 
         # Sensor select
 
         sensor_select = self._build_query_box()
 
+        # Chart itself
+
+        chart = self._build_chart()
+
+        # Analytics data
+
+        stats_box = self._build_stats_box()
+
+        self.layout = QVBoxLayout(self)
+        self.layout.addWidget(sensor_select)
+        self.layout.addWidget(chart, stretch=1)
+        self.layout.addWidget(stats_box)
+
+        # Loading overlay
+
+        self.loading_overlay = LoadingOverlay(self)
+
+        self._load_sensors()
+
+    def _load_sensors(self):
+        self.sensors = self.repository.fetch_station_sensors(self.station_id)
+
+        self.sensor_combo.clear()
+        for sensor in self.sensors:
+            self.sensor_combo.addItem(sensor.codename,userData=sensor)
+
+    def check_sensors_availability(self) -> bool:
+        if not self.sensors:
+            self._load_sensors()
+
+        return bool(self.sensors)
+
+
+
+    def _build_query_box(self):
+        box = QGroupBox("Wybierz sensor")
+
+        sensor_combo_label = QLabel("Sensor: ", self)
+        self.sensor_combo = QComboBox(self,editable=True)
+        self.sensor_combo.lineEdit().setReadOnly(True)
+        self.sensor_combo.lineEdit().setPlaceholderText("Wybierz sensor")
+
+        self.sensor_combo.setCurrentIndex(-1)
+
+        now_dt = QDateTime.currentDateTime()
+        from_dt = now_dt.addDays(-3)
+
+        range_from_label = QLabel("Od: ", self)
+        self.date_from_edit = QDateTimeEdit(self)
+        self.date_from_edit.setDateTime(from_dt)
+        self.date_from_edit.setMinimumDateTime(now_dt.addDays(-365))
+        self.date_from_edit.setCalendarPopup(True)
+
+        range_to_label = QLabel("Do: ", self)
+        self.date_to_edit = QDateTimeEdit(self)
+        self.date_to_edit.setDateTime(now_dt)
+        self.date_to_edit.setMaximumDateTime(now_dt)
+        self.date_to_edit.setCalendarPopup(True)
+
+        self.date_from_edit.setMaximumDateTime(self.date_to_edit.dateTime())
+        self.date_to_edit.setMinimumDateTime(self.date_from_edit.dateTime())
+
+        self.date_from_edit.dateTimeChanged.connect(lambda dt: self.date_to_edit.setMinimumDateTime(dt))
+        self.date_to_edit.dateTimeChanged.connect(lambda dt: self.date_from_edit.setMaximumDateTime(dt))
+
+
+        display_btn = QPushButton("Wyświetl",self)
+        display_btn.clicked.connect(self.on_display_btn)
+
+        sensor_select_layout = QHBoxLayout()
+        sensor_select_layout.addWidget(sensor_combo_label)
+        sensor_select_layout.addWidget(self.sensor_combo)
+        sensor_select_layout.addWidget(range_from_label)
+        sensor_select_layout.addWidget(self.date_from_edit,stretch=1)
+        sensor_select_layout.addWidget(range_to_label)
+        sensor_select_layout.addWidget(self.date_to_edit,stretch=1)
+        sensor_select_layout.addWidget(display_btn,stretch=1)
+        box.setLayout(sensor_select_layout)
+        return box
+
+    def _build_chart(self):
         # ---------------------------------------------------------
         # 1. Utworzenie wykresu i osi
         # ---------------------------------------------------------
@@ -137,68 +217,7 @@ class StationDataWidget(QWidget):
         self.chart_view = QChartView(self.chart)
         self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        # Analytics data
-
-        stats_box = self._build_stats_box()
-
-        self.layout = QVBoxLayout(self)
-        self.layout.addWidget(sensor_select)
-        self.layout.addWidget(self.chart_view, stretch=1)
-        self.layout.addWidget(stats_box)
-
-        # Loading overlay
-
-        self.loading_overlay = LoadingOverlay(self)
-
-    def _build_query_box(self):
-        box = QGroupBox("Wybierz sensor")
-
-        sensor_combo_label = QLabel("Sensor: ", self)
-        self.sensor_combo = QComboBox(self,editable=True)
-        self.sensor_combo.lineEdit().setReadOnly(True)
-        self.sensor_combo.lineEdit().setPlaceholderText("Wybierz sensor")
-
-        for sensor in self.sensors:
-            self.sensor_combo.addItem(sensor.codename,userData=sensor)
-
-        self.sensor_combo.setCurrentIndex(-1)
-
-        now_dt = QDateTime.currentDateTime()
-        from_dt = now_dt.addDays(-3)
-
-        range_from_label = QLabel("Od: ", self)
-        self.date_from_edit = QDateTimeEdit(self)
-        self.date_from_edit.setDateTime(from_dt)
-        self.date_from_edit.setMinimumDateTime(now_dt.addDays(-365))
-        self.date_from_edit.setCalendarPopup(True)
-
-        range_to_label = QLabel("Od: ", self)
-        self.date_to_edit = QDateTimeEdit(self)
-        self.date_to_edit.setDateTime(now_dt)
-        self.date_to_edit.setMaximumDateTime(now_dt)
-        self.date_to_edit.setCalendarPopup(True)
-
-        self.date_from_edit.setMaximumDateTime(self.date_to_edit.dateTime())
-        self.date_to_edit.setMinimumDateTime(self.date_from_edit.dateTime())
-
-        self.date_from_edit.dateTimeChanged.connect(lambda dt: self.date_to_edit.setMinimumDateTime(dt))
-        self.date_to_edit.dateTimeChanged.connect(lambda dt: self.date_from_edit.setMaximumDateTime(dt))
-
-
-        display_btn = QPushButton("Wyświetl",self)
-        display_btn.clicked.connect(self.on_display_btn)
-
-        sensor_select_layout = QHBoxLayout()
-        sensor_select_layout.addWidget(sensor_combo_label)
-        sensor_select_layout.addWidget(self.sensor_combo)
-        sensor_select_layout.addWidget(range_from_label)
-        sensor_select_layout.addWidget(self.date_from_edit,stretch=1)
-        sensor_select_layout.addWidget(range_to_label)
-        sensor_select_layout.addWidget(self.date_to_edit,stretch=1)
-        sensor_select_layout.addWidget(display_btn,stretch=1)
-        box.setLayout(sensor_select_layout)
-        return box
-
+        return self.chart_view
 
     def _build_stats_box(self):
         box = QGroupBox("Statystyki")
@@ -427,6 +446,9 @@ class StationDetailsWidget(QTabWidget):
         self.repository = repository
         self.details = repository.fetch_station_details_view(station_id)
 
+        if not self.details:
+            raise RuntimeError("Invalid station id")
+
         self._build_layout()
 
     def _build_layout(self):
@@ -444,8 +466,25 @@ class StationDetailsWidget(QTabWidget):
         self.station_info_widget = StationInfoWidget(details, parent=self)
         self.addTab(self.station_info_widget,"Informacje")
 
+        if not self.station_data_widget.check_sensors_availability():
+            self.setCurrentWidget(self.station_info_widget)
 
+        self.currentChanged.connect(self._on_tab_changed)
 
+    @Slot(int)
+    def _on_tab_changed(self,tab: int):
+        # Ta funkcja istnieje aby automatycznie przełączać z
+        #   zakładki danych sensorów kiedy żadne sensory nie są dostępne
+        if tab != 0:
+            return
+
+        if not self.station_data_widget.check_sensors_availability():
+            QMessageBox.warning(
+                self,"Brak dostępnych sensorów",
+                "Nie ma aktualnie dostępnych żadnych sensorów dla tej stacji!\n"
+                "Sprawdź połączenie lub spróbuj ponownie później."
+            )
+            self.setCurrentWidget(self.station_info_widget)
 
 
 

@@ -1,8 +1,8 @@
+import logging
 import typing
 from datetime import datetime
-from typing import Callable, Any, Literal
+from typing import Callable, Any
 
-import logging
 import requests
 
 import src.api.exceptions as exceptions
@@ -14,6 +14,7 @@ class Client:
     """
     Klient HTTP dla API GIOŚ (https://api.gios.gov.pl),
     obsługujący paginację, obsługę błędów oraz mapowanie odpowiedzi na modele.
+    Przechowuje również status połączenia z API oraz udostępnia callback sygnalizujący zmiane stanu.
     """
 
     __BASE = "https://api.gios.gov.pl"
@@ -26,6 +27,7 @@ class Client:
 
     @connection_status.setter
     def connection_status(self,value: bool):
+        """Setter statusu połączenia, w razie zmiany wywołuje callback oraz zapisuje wartość"""
         if self._connection_status == value:
             return
 
@@ -59,7 +61,7 @@ class Client:
             url += f"&{key}={value}"
         return url
 
-    def __get(
+    def _get(
         self,
         endpoint: str,
         page: int = 0,
@@ -80,7 +82,7 @@ class Client:
 
         Raises:
             exceptions.APIError: W przypadku błędu HTTP z mapowaniem pól error_code, error_reason,
-                error_result oraz error_solution.
+                error_result oraz error_solution udostępnionymi przez GIOŚ API.
         """
         try:
             url = self.make_url(endpoint, page, size, args)
@@ -103,7 +105,7 @@ class Client:
             self.connection_status = False
             raise conn_err
 
-    def __get_collected(
+    def _get_collected(
         self,
         endpoint: str,
         target: str,
@@ -124,7 +126,7 @@ class Client:
         Raises:
             TypeError: Gdy zwrócony fragment JSON nie jest listą ani słownikiem.
         """
-        response = self.__get(endpoint, size=size, args=args)
+        response = self._get(endpoint, size=size, args=args)
         total_pages = int(response.get("totalPages", 1))
         fragment = response.get(target)
 
@@ -136,7 +138,7 @@ class Client:
             raise TypeError(f"Nieoczekiwany typ danych: {type(fragment).__name__}")
 
         for page in range(1, total_pages):
-            response = self.__get(endpoint, page=page, args=args)
+            response = self._get(endpoint, page=page, args=args)
             fragment = response.get(target)
             if isinstance(fragment, list):
                 result.extend(fragment)
@@ -147,7 +149,7 @@ class Client:
 
         return result
 
-    def __get_each(
+    def _get_each(
         self,
         endpoint: str,
         target: str,
@@ -165,12 +167,12 @@ class Client:
             size (int, opcjonalnie): Liczba rekordów na stronę. Domyślnie 500.
             args (dict[str, Any], opcjonalnie): Dodatkowe parametry query string.
         """
-        response = self.__get(endpoint, size=size, args=args)
+        response = self._get(endpoint, size=size, args=args)
         total_pages = int(response.get("totalPages", 1))
 
         for page in range(total_pages):
             if page > 0:
-                response = self.__get(endpoint, page=page, args=args)
+                response = self._get(endpoint, page=page, args=args)
             callback(response.get(target))
 
     def fetch_stations(self) -> list[models.Station]:
@@ -180,7 +182,7 @@ class Client:
         Returns:
             list[models.Station]: Lista obiektów Station z danymi lokalizacyjnymi i nazewnictwem.
         """
-        raw = self.__get_collected(
+        raw = self._get_collected(
             endpoint="pjp-api/v1/rest/station/findAll",
             target="Lista stacji pomiarowych",
         )
@@ -220,50 +222,9 @@ class Client:
         if station_codename:
             params["filter[kod-stacji]"] = station_codename
 
-        raw = self.__get_collected(
+        raw = self._get_collected(
             endpoint="pjp-api/v1/rest/metadata/stations",
             target="Lista metadanych stacji pomiarowych",
-            args=params,
-        )
-        return [
-            models.StationMeta(
-                codename=entry["Kod stacji"],
-                international_codename=entry["Kod międzynarodowy"],
-                launch_date=datetime.fromisoformat(entry["Data uruchomienia"]),
-                close_date=(
-                    datetime.fromisoformat(entry["Data zamknięcia"])
-                    if entry.get("Data zamknięcia")
-                    else None
-                ),
-                type=entry["Rodzaj stacji"],
-            )
-            for entry in raw
-        ]
-
-    def fetch_sensor_meta(
-        self,
-        measure_type: str = None,
-        station_codename: str = None,
-    ) -> list[models.StationMeta]:
-        """
-        Pobiera metadane sensorów, filtrowane po rodzaju pomiaru lub kodzie stacji.
-
-        Args:
-            measure_type (str, opcjonalnie): Kod typu pomiaru do filtrowania.
-            station_codename (str, opcjonalnie): Kod stacji do filtrowania.
-
-        Returns:
-            list[models.StationMeta]: Lista obiektów StationMeta dla sensorów.
-        """
-        params: dict[str, Any] = {}
-        if measure_type:
-            params["filter[typ-pomiaru]"] = measure_type
-        if station_codename:
-            params["filter[kod-stacji]"] = station_codename
-
-        raw = self.__get_collected(
-            endpoint="pjp-api/v1/rest/metadata/sensors",
-            target="Lista metadanych stanowisk pomiarowych",
             args=params,
         )
         return [
@@ -297,7 +258,7 @@ class Client:
         Raises:
             ValueError: Gdy odpowiedź API ma niespodziewany format.
         """
-        raw = self.__get_collected(
+        raw = self._get_collected(
             endpoint=f"pjp-api/v1/rest/aqindex/getIndex/{station_id}",
             target="AqIndex",
         )
@@ -334,7 +295,7 @@ class Client:
         Returns:
             list[models.Sensor]: Lista obiektów Sensor z identyfikatorem i nazwą wskaźnika.
         """
-        raw = self.__get_collected(
+        raw = self._get_collected(
             endpoint=f"pjp-api/v1/rest/station/sensors/{station_id}",
             target="Lista stanowisk pomiarowych dla podanej stacji",
         )
@@ -370,7 +331,7 @@ class Client:
                         )
                     )
 
-        self.__get_each(
+        self._get_each(
             endpoint=f"pjp-api/v1/rest/data/getData/{sensor_id}",
             target="Lista danych pomiarowych",
             callback=collect,
@@ -389,8 +350,8 @@ class Client:
 
         Args:
             sensor_id (int): Identyfikator czujnika.
-            date_from (datetime, opcjonalnie): Data początkowa (inclusive).
-            date_to (datetime, opcjonalnie): Data końcowa (inclusive).
+            date_from (datetime, opcjonalnie): Data początkowa.
+            date_to (datetime, opcjonalnie): Data końcowa.
             days (int, opcjonalnie): Liczba dni do pobrania przed dniem dzisiejszym.
 
         Returns:
@@ -417,7 +378,7 @@ class Client:
                 )
 
         try:
-            self.__get_each(
+            self._get_each(
                 endpoint=f"pjp-api/v1/rest/archivalData/getDataBySensor/{sensor_id}",
                 target="Lista archiwalnych wyników pomiarów",
                 callback=collect,
