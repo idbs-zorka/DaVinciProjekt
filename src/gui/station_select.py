@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QWidget, QLineEdit, QComboBox, QFormLayout, QListW
 from geopy.distance import distance
 
 from src import location
-from src.config import AQ_TYPES
+from src.config import AQ_TYPES, AQ_INDEX_CATEGORIES_COLORS, AQ_INDEX_CATEGORIES
 from src.database.views import StationListView
 from src.fuzzy_seach import fuzzy_search
 from src.gui.station_map_view import StationMapViewWidget
@@ -33,11 +33,13 @@ class StationSelectFilter(QWidget):
         super().__init__()
 
         self.search_query_input = QLineEdit(self)
-        self.search_query_input.textChanged.connect(self._on_filter_changed)
+        self.search_query_input.textChanged.connect(self._on_query_changed)
+        self.search_query_input.editingFinished.connect(self._on_query_edit_finished)
 
         # Searching by location
 
         self.search_by_location_checkbox = QCheckBox("Szukaj po lokalizacji", self)
+        self.search_by_location_checkbox.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.location_range = QComboBox(self,editable=True)
         self.location_range.lineEdit().setValidator(QIntValidator(10,100))
@@ -67,7 +69,7 @@ class StationSelectFilter(QWidget):
         self.city_combo.currentIndexChanged.connect(self._on_filter_changed)
 
         self.layout = QFormLayout(self) # Tworzenie elementu: Text:Element
-
+        self.layout.setContentsMargins(0,0,0,0)
         self.layout.addRow("Szukaj", self.search_query_input)
         self.layout.addRow("", self.search_by_location_layout)
         self.layout.addRow("Miasto", self.city_combo)
@@ -83,9 +85,18 @@ class StationSelectFilter(QWidget):
                 city=self.current_city(),
                 search_by_location=self.search_by_location_checkbox.isChecked(),
                 range=int(self.location_range.currentText())
-
             )
         )
+
+    @Slot()
+    def _on_query_changed(self):
+        if not self.search_by_location_checkbox.isChecked():
+            self._on_filter_changed()
+
+    @Slot()
+    def _on_query_edit_finished(self):
+        self._on_filter_changed()
+
 
 
 class StationIndexFetcher(QRunnable):
@@ -160,9 +171,10 @@ class StationSelectWidget(QMainWindow):
         # Widget mapy
         self.map_view = StationMapViewWidget(parent=right)
         self.map_view.leaftletLoaded.connect(lambda : right.setVisible(True))
-        self.map_view.loadFinished.connect(self.on_map_loaded)
+        self.map_view.web.loadFinished.connect(self.on_map_loaded)
         self.map_view.stationSelected.connect(self.on_station_marker_clicked)
         self.map_view.requestStationIndexValue.connect(self.on_request_station_index_value)
+
 
         right_layout.addLayout(aq_index_type_form, stretch=0)
         right_layout.addWidget(self.map_view, stretch=1)
@@ -287,7 +299,6 @@ class StationSelectWidget(QMainWindow):
     @Slot(int)
     def on_station_marker_clicked(self,station_id: int):
         self.stationSelected.emit(station_id)
-
 
     @Slot(int)
     def on_aq_index_changed(self,index: int):

@@ -7,23 +7,21 @@ UPDATE_INTERVALS = {
 }
 
 AQ_INDEX_CATEGORIES = {
-    -1: "Brak indeksu",
+    -1: "Brak wartości",
     0: "Bardzo dobry",
     1: "Dobry",
     2: "Umiarkowany",
     3: "Zły",
     4: "Bardzo zły",
-    5: "Brak indeksu",
 }
 
 AQ_INDEX_CATEGORIES_COLORS = {
-    -1: "#A9A9A9",  # Brak indeksu – ciemny szary
-     0: "#009966",  # Bardzo dobry – ciemna zieleń
-     1: "#66CC66",  # Dobry – jasna zieleń
-     2: "#FFDE33",  # Umiarkowany – żółć
-     3: "#FF9933",  # Zły – pomarańcz
-     4: "#CC0033",  # Bardzo zły – czerwień
-     5: "#A9A9A9",  # Brak indeksu – ciemny szary
+    -1: 0xA9A9A9,  # Brak indeksu – ciemny szary
+     0: 0x009966,  # Bardzo dobry – ciemna zieleń
+     1: 0x66CC66,  # Dobry – jasna zieleń
+     2: 0xFFDE33,  # Umiarkowany – żółć
+     3: 0xFF9933,  # Zły – pomarańcz
+     4: 0xCC0033,  # Bardzo zły – czerwień
 }
 
 
