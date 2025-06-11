@@ -1,4 +1,5 @@
 from geopy import Nominatim
+from geopy.distance import distance
 import geocoder
 
 def find_position(location_name: str) -> tuple[float,float]:

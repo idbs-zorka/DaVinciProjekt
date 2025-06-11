@@ -3,9 +3,12 @@ from dataclasses import dataclass
 from typing import Sequence, cast, TYPE_CHECKING
 
 from PySide6.QtCore import Signal, Slot, Qt, QThreadPool, QRunnable, QObject
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import QWidget, QLineEdit, QComboBox, QFormLayout, QListWidget, QVBoxLayout, QHBoxLayout, \
-    QListWidgetItem, QMainWindow, QStatusBar, QLabel, QApplication, QMessageBox
+    QListWidgetItem, QMainWindow, QStatusBar, QLabel, QApplication, QMessageBox, QCheckBox, QSpacerItem
+from geopy.distance import distance
 
+from src import location
 from src.config import AQ_TYPES
 from src.database.views import StationListView
 from src.fuzzy_seach import fuzzy_search
@@ -20,6 +23,8 @@ if TYPE_CHECKING:
 class FilterState:
     search_query: str
     city: str | None
+    search_by_location: bool
+    range: int
 
 class StationSelectFilter(QWidget):
     filter_changed = Signal(FilterState)
@@ -28,32 +33,59 @@ class StationSelectFilter(QWidget):
         super().__init__()
 
         self.search_query_input = QLineEdit(self)
-        self.search_query_input.textChanged.connect(self.on_search_query_changed)
+        self.search_query_input.textChanged.connect(self._on_filter_changed)
+
+        # Searching by location
+
+        self.search_by_location_checkbox = QCheckBox("Szukaj po lokalizacji", self)
+
+        self.location_range = QComboBox(self,editable=True)
+        self.location_range.lineEdit().setValidator(QIntValidator(10,100))
+        self.location_range.setEnabled(False)
+
+        self.location_range.addItems(("5","10","30","50","100"))
+        self.location_range.setCurrentText("10")
+
+        location_range_label = QLabel("Km",self)
+
+        self.search_by_location_layout = QHBoxLayout()
+
+        self.search_by_location_layout.addWidget(self.search_by_location_checkbox)
+        self.search_by_location_layout.addStretch(1)
+        self.search_by_location_layout.addWidget(self.location_range)
+        self.search_by_location_layout.addWidget(location_range_label)
+
+        # Signals
+
+        self.search_by_location_checkbox.stateChanged.connect(lambda x: self.location_range.setEnabled(x))
+        self.search_by_location_checkbox.stateChanged.connect(self._on_filter_changed)
+
+        self.location_range.currentTextChanged.connect(self._on_filter_changed)
+
         self.city_combo = QComboBox(self)
         self.city_combo.addItems(["Wybierz miasto", *cities])
-        self.city_combo.currentIndexChanged.connect(self.on_city_changed)
+        self.city_combo.currentIndexChanged.connect(self._on_filter_changed)
 
-        self.layout = QFormLayout(self) #Tworzenie elemenu: Text:Element
+        self.layout = QFormLayout(self) # Tworzenie elementu: Text:Element
 
-        self.layout.addRow(self.tr("Szukaj"), self.search_query_input)
-        self.layout.addRow(self.tr("Miasto"), self.city_combo)
+        self.layout.addRow("Szukaj", self.search_query_input)
+        self.layout.addRow("", self.search_by_location_layout)
+        self.layout.addRow("Miasto", self.city_combo)
 
     def current_city(self):
         return self.city_combo.currentText() if self.city_combo.currentIndex() > 0 else None
 
-    @Slot(str)
-    def on_search_query_changed(self, text: str):
-        self.filter_changed.emit(FilterState(
-            search_query=text,
-            city=self.current_city()
-        ))
+    @Slot()
+    def _on_filter_changed(self):
+        self.filter_changed.emit(
+            FilterState(
+                search_query=self.search_query_input.text(),
+                city=self.current_city(),
+                search_by_location=self.search_by_location_checkbox.isChecked(),
+                range=int(self.location_range.currentText())
 
-    @Slot(int)
-    def on_city_changed(self, value: int):
-        self.filter_changed.emit(FilterState(
-            search_query=self.search_query_input.text(),
-            city=self.current_city()
-        ))
+            )
+        )
 
 
 class StationIndexFetcher(QRunnable):
@@ -91,7 +123,7 @@ class StationSelectWidget(QMainWindow):
         # Główny layout HBox
         main = QWidget(self)
 
-        # ——— LEWA CZĘŚĆ ———
+        # LEWA CZĘŚĆ
         left = QWidget(main)
         left.setMinimumSize(350,450)
         left_layout = QVBoxLayout(left)
@@ -112,13 +144,13 @@ class StationSelectWidget(QMainWindow):
         left_layout.addWidget(self.select_filter_widget)
         left_layout.addWidget(self.stations_list_widget)
 
-        # ——— PRAWA CZĘŚĆ ———
+        # PRAWA CZĘŚĆ
         right = QWidget(main,visible=False)
         self.right = right
         right.setMinimumSize(800,600)
         right_layout = QVBoxLayout(right)
 
-        # Formularz wyboru typu indeksu AQ
+        # Formularz wyboru typu indeksu jakości powietrzna
         aq_index_type_form = QFormLayout()
         self.aq_index_type_combo = QComboBox()
         self.aq_index_type_combo.addItems(AQ_TYPES)
@@ -135,13 +167,13 @@ class StationSelectWidget(QMainWindow):
         right_layout.addLayout(aq_index_type_form, stretch=0)
         right_layout.addWidget(self.map_view, stretch=1)
 
-        # ——— DODANIE DO GŁÓWNEGO ———
+        # DODANIE DO GŁÓWNEGO
         main_layout = QHBoxLayout(main)
 
         main_layout.addWidget(left, 0)  # lewy panel bez stretchu
         main_layout.addWidget(right, 1)  # prawy panel z większym stretchem
 
-        # (opcjonalnie) wyrównanie elementów
+        # wyrównanie elementów
         main_layout.setStretchFactor(left, 0)
         main_layout.setStretchFactor(right, 1)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -211,13 +243,21 @@ class StationSelectWidget(QMainWindow):
             ]
 
         if state.search_query != '':
-            name_to_station = {
-                st.name: st for st in self.filtered_stations
-            }
-            searched = fuzzy_search(state.search_query,name_to_station.keys(),score_cutoff=60)
-            self.filtered_stations = [
-            name_to_station[result] for result in searched
-            ]
+            if state.search_by_location: # Szukaj po lokalizacji
+                (lat,lng) = location.find_position(state.search_query)
+                self.map_view.set_position(lat,lng)
+                self.filtered_stations = [
+                    st for st in self.filtered_stations
+                    if distance((lat,lng),(st.latitude,st.longitude)).km <= state.range
+                ]
+            else: # Szukaj po nazwie
+                name_to_station = {
+                    st.name: st for st in self.filtered_stations
+                }
+                searched = fuzzy_search(state.search_query,name_to_station.keys(),score_cutoff=60)
+                self.filtered_stations = [
+                name_to_station[result] for result in searched
+                ]
         else:
             self.filtered_stations.sort(key=lambda x: x.name)
 
